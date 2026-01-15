@@ -16,7 +16,8 @@ from app.schemas.auth import (
     AdminCreateUserRequest,
     TokenResponse,
     UserResponse,
-    LoginResponse
+    LoginResponse,
+    UserRole
 )
 
 class AuthService:
@@ -31,7 +32,7 @@ class AuthService:
 
         try:
             user = User(
-                user_id=firebase_user.uid,
+                user_id=firebase_user,
                 email=data.email,
                 phone_number=data.phone_number,
                 name=data.name if data.name else "",
@@ -41,7 +42,7 @@ class AuthService:
             db.add(user)
             db.flush()
 
-            if data.role == "administrator":
+            if data.role == UserRole.ADMINISTRATOR:
                 profile = Administrator(
                     user_id=user.user_id,
                     admin_id=str(uuid.uuid4()),
@@ -49,7 +50,7 @@ class AuthService:
                     role="administrator",
                     department=data.department if data.department else "",
                 )
-            elif data.role == "driver":
+            elif data.role == UserRole.DRIVER:
                 profile = Driver(
                     user_id=user.user_id,
                     name=data.name if data.name else ""
@@ -64,17 +65,17 @@ class AuthService:
             db.refresh(user)
             db.refresh(profile)
 
-            return UserResponse.from_orm(user)
+            return UserResponse.model_validate(user)
         except Exception as e:
             db.rollback()
-            delete_firebase_user(firebase_user.uid)
+            delete_firebase_user(firebase_user)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error creating user",
             )
     
     @staticmethod
-    def login_user(db: Session, token_data: dict) -> LoginResponse:
+    def login(db: Session, token_data: dict) -> LoginResponse:
         data = verify_firebase_token(token_data)
         user_id = data.get("uid")
 
@@ -90,7 +91,7 @@ class AuthService:
         db.commit()
 
         return LoginResponse(
-            user=UserResponse.from_orm(user),
+            user=UserResponse.model_validate(user),
             token=TokenResponse(
                 token=token_data,
                 token_type="bearer",
@@ -150,6 +151,6 @@ class AuthService:
         db.commit()
         db.refresh(user)
 
-        return UserResponse.from_orm(user)
+        return UserResponse.model_validate(user)
 
     

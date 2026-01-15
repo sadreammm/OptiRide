@@ -66,7 +66,13 @@ class DriverService:
         return driver
     
     @staticmethod
-    def delete_driver(db: Session, driver: Driver) -> None:
+    def delete_driver(db: Session, driver_id: str) -> None:
+        driver = DriverService.get_driver_by_id(db, driver_id)
+        if not driver:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Driver not found"
+            )
         db.delete(driver)
         db.commit()
     
@@ -138,15 +144,15 @@ class DriverService:
         return nearby_drivers
     
     @staticmethod
-    def update_status(db: Session, driver_id: str, status_update: StatusUpdate) -> Driver:
+    def update_status(db: Session, driver_id: str, new_status: DriverStatus) -> Driver:
         driver = DriverService.get_driver_by_id(db, driver_id)
 
         if not driver:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=404,
                 detail="Driver not found"
             )
-        driver.status = status_update.status.value
+        driver.status = new_status.value
         db.commit()
         db.refresh(driver)
         return driver
@@ -274,7 +280,8 @@ class DriverService:
         
         driver.status = DriverStatus.ON_BREAK.value
         driver.breaks += 1
-        driver.location = WKTElement(f'POINT({break_request.longitude} {break_request.latitude})', srid=4326)
+        if break_request.latitude is not None and break_request.longitude is not None:
+            driver.location = WKTElement(f'POINT({break_request.longitude} {break_request.latitude})', srid=4326)
 
         db.commit()
         db.refresh(driver)

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 from datetime import datetime
 from enum import Enum
@@ -27,14 +27,15 @@ class AdminCreateUserRequest(BaseModel):
     name : Optional[str] = None
     department : Optional[str] = None
 
-    @validator('phone_number')
-    def validate_phone_number(cls, v):
+    @field_validator('phone_number')
+    @classmethod
+    def validate_phone_number(cls, v: str | None) -> str | None:
         if v is not None and not v.startswith('+'):
             raise ValueError('Phone number must start with + and country code')
         return v
 
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "email": "driver@optiride.com",
                 "password": "StrongPassword123!",
@@ -43,6 +44,7 @@ class AdminCreateUserRequest(BaseModel):
                 "name": "John Doe"
             }
         }
+    }
 
 class ChangePasswordRequest(BaseModel):
     old_password : str

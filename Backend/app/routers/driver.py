@@ -44,7 +44,7 @@ def create_driver(
         )
     
     driver = driver_service.create_driver(db=db, driver_data=driver_data)
-    return DriverResponse.from_orm(driver)
+    return DriverResponse.model_validate(driver)
 
 @router.get("/", response_model=DriverListResponse)
 def list_drivers(
@@ -54,10 +54,11 @@ def list_drivers(
     admin = Depends(get_current_admin)
 ):
     driver_service = DriverService()
-    drivers, total = driver_service.list_drivers(db=db, skip=skip, limit=limit)
+    total = db.query(Driver).count()
+    drivers = driver_service.list_drivers(db=db, skip=skip, limit=limit)
     return DriverListResponse(
         total=total,
-        drivers=[DriverResponse.from_orm(driver) for driver in drivers]
+        drivers=[DriverResponse.model_validate(driver) for driver in drivers]
     )
 
 @router.get("/active-locations")
@@ -66,7 +67,7 @@ def get_active_driver_locations(
     admin = Depends(get_current_admin)
 ):
     driver_service = DriverService()
-    locations = driver_service.get_active_driver_locations(db=db)
+    locations = driver_service.get_all_active_drivers_locations(db=db)
     return locations
 
 @router.get("/stats/summary")
@@ -106,7 +107,7 @@ def get_my_driver_profile(
         )
     driver_profile.email = db.query(User).filter(User.user_id == driver.user_id).first().email
     driver_profile.phone_number = db.query(User).filter(User.user_id == driver.user_id).first().phone_number
-    return DriverResponse.from_orm(driver_profile)
+    return DriverResponse.model_validate(driver_profile)
 
 @router.patch("/me", response_model=DriverResponse)
 def update_my_driver_profile(
@@ -241,7 +242,7 @@ def get_drivers_in_zone(
     return {
         "zone_id": zone_id,
         "total_drivers": len(drivers),
-        "drivers": [DriverResponse.from_orm(driver) for driver in drivers]
+        "drivers": [DriverResponse.model_validate(driver) for driver in drivers]
     }
 
 @router.get("/{driver_id}", response_model=DriverResponse)
@@ -259,7 +260,7 @@ def get_driver_by_id(
         )
     driver.email = db.query(User).filter(User.user_id == driver.user_id).first().email
     driver.phone_number = db.query(User).filter(User.user_id == driver.user_id).first().phone_number
-    return DriverResponse.from_orm(driver)
+    return DriverResponse.model_validate(driver)
 
 @router.get("/{driver_id}/performance-stats", response_model=DriverPerformanceStats)
 def get_driver_performance_stats_by_id(

@@ -18,4 +18,4 @@ class Assignment(Base):
     assigned_at = Column(DateTime, default=datetime.utcnow)
 
     driver_rel = relationship("Driver", back_populates="assignments")
-    orders_rel = relationship("Order", primaryjoin="Assignment.orders.any(Order.order_id)", viewonly=True)
+    #orders_rel = relationship("Order", primaryjoin="Assignment.orders.any(Order.order_id)", viewonly=True)

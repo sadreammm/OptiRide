@@ -33,6 +33,7 @@ class Driver(Base):
     assignments = relationship("Assignment", back_populates="driver_rel")
     sensor_records = relationship("SensorRecord", back_populates="driver")
     events = relationship("Event", back_populates="driver")
+    gps_tracks = relationship("GPSTrack", back_populates="driver")
     user = relationship("User", back_populates="driver")
 
 
