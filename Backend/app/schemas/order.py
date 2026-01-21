@@ -5,6 +5,7 @@ from enum import Enum
 
 class OrderStatus(str, Enum):
     pending = "pending"
+    offered = "offered"  # Order offered to driver, awaiting acceptance
     assigned = "assigned"
     picked_up = "picked_up"
     delivered = "delivered"

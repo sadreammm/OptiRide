@@ -70,7 +70,7 @@ class OrderService:
         if not order:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
         
-        if order.status not in [OrderStatus.pending.value, OrderStatus.assigned.value]:
+        if order.status not in [OrderStatus.pending.value, OrderStatus.offered.value, OrderStatus.assigned.value]:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order cannot be assigned in its current status")
         
         driver = self.db.query(Driver).filter(Driver.driver_id == assign_data.driver_id).first()
@@ -116,7 +116,6 @@ class OrderService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
         
         driver_service = DriverService(self.db)
-        from app.schemas.driver import DriverStatus
         nearby_drivers = driver_service.get_nearby_drivers(
             latitude=order.pickup_latitude, longitude=order.pickup_longitude,
             radius_km=10.0, status=DriverStatus.AVAILABLE, limit=1)
@@ -131,13 +130,92 @@ class OrderService:
         pickup_time = datetime.utcnow() + timedelta(minutes=travel_time_min)
         delivery_time = pickup_time + timedelta(minutes=order.estimated_duration_min or 25)
 
-        assign_data = OrderAssign(
-            driver_id=closest_driver.driver_id,
-            estimated_pickup_time=pickup_time,
-            estimated_dropoff_time=delivery_time
-        )
-
-        return self.assign_order(order_id, assign_data)
+        # Offer to driver (not assigned yet - driver must accept)
+        order.driver_id = closest_driver.driver_id
+        order.status = OrderStatus.offered.value  # Changed from assigned
+        order.estimated_pickup_time = pickup_time
+        order.estimated_dropoff_time = delivery_time
+        
+        self.db.commit()
+        self.db.refresh(order)
+        
+        # TODO: Send push notification to driver about new order offer
+        
+        return order
+    
+    def accept_order(self, order_id: str, driver_id: str) -> Order:
+        order = self.get_order(order_id)
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        
+        if order.status != OrderStatus.offered.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail=f"Order is not in offered status. Current status: {order.status}"
+            )
+        
+        if order.driver_id != driver_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, 
+                detail="This order was not offered to you"
+            )
+        
+        # Check driver capacity
+        MAX_CONCURRENT_ORDERS = 3
+        active_orders_count = self.db.query(Order).filter(
+            Order.driver_id == driver_id,
+            Order.status.in_([OrderStatus.assigned.value, OrderStatus.picked_up.value])
+        ).count()
+        
+        if active_orders_count >= MAX_CONCURRENT_ORDERS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail=f"You already have {active_orders_count} active orders. Maximum is {MAX_CONCURRENT_ORDERS}."
+            )
+        
+        # Accept the order
+        order.status = OrderStatus.assigned.value
+        order.assigned_at = datetime.utcnow()
+        
+        driver = self.db.query(Driver).filter(Driver.driver_id == driver_id).first()
+        if driver:
+            driver.status = DriverStatus.BUSY.value
+            driver.orders_received += 1
+        
+        self.db.commit()
+        self.db.refresh(order)
+        
+        return order
+    
+    def reject_order(self, order_id: str, driver_id: str) -> Order:
+        order = self.get_order(order_id)
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        
+        if order.status != OrderStatus.offered.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail=f"Order is not in offered status. Current status: {order.status}"
+            )
+        
+        if order.driver_id != driver_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, 
+                detail="This order was not offered to you"
+            )
+        
+        # Reject the order - return to pending
+        order.status = OrderStatus.pending.value
+        order.driver_id = None
+        order.estimated_pickup_time = None
+        order.estimated_dropoff_time = None
+        
+        self.db.commit()
+        self.db.refresh(order)
+        
+        # TODO: Offer to next nearest driver or return to pool
+        
+        return order
     
     def picked_up(self, order_id: str, pickup_data: OrderPickup) -> Order:
         order = self.get_order(order_id)
