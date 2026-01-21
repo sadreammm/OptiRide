@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.config import settings
-from app.routers import auth, driver
+from app.core.config import settings, ALLOWED_ORIGINS
+from app.routers.auth import router as auth_router
+from app.routers.driver import router as driver_router
 
 app = FastAPI(
     title="Optiride Backend API",
@@ -11,15 +12,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Routers
-app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-app.include_router(driver.router, prefix="/drivers", tags=["Drivers"])
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+app.include_router(driver_router, prefix="/drivers", tags=["Drivers"])
 
 @app.get("/")
 async def root():

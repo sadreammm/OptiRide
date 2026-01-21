@@ -3,15 +3,21 @@ from firebase_admin import auth, credentials
 from fastapi import Depends, HTTPException, status
 from typing import Optional
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import os
 
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.database import get_db
 from app.models.user import User
 
-if not firebase_admin._apps:
-    cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
-    firebase_admin.initialize_app(cred)
+# Only initialize Firebase if credentials file exists
+if os.path.exists(settings.FIREBASE_CREDENTIALS_PATH) and not firebase_admin._apps:
+    try:
+        cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
+        firebase_admin.initialize_app(cred)
+    except Exception as e:
+        print(f"Warning: Firebase initialization failed: {e}")
+        print("Firebase authentication will be disabled for development")
 
 security_scheme = HTTPBearer()
 
