@@ -36,12 +36,8 @@ def verify_firebase_token(creds : HTTPAuthorizationCredentials = Depends(securit
             detail="Could not validate credentials",
         )
 
-def get_firebase_user(creds: HTTPAuthorizationCredentials = Depends(security_scheme)):
-    try:
-        firebase_user = verify_firebase_token(creds) # Assess the logic here
-        return firebase_user
-    except HTTPException as e:
-        raise e
+
+get_firebase_user = verify_firebase_token
 
 def create_firebase_user(email: str, password: str, phone_number: Optional[str] = None):
     try:
@@ -87,12 +83,17 @@ def delete_firebase_user(uid: str):
 
 def update_firebase_user(uid: str, email: Optional[str] = None, password: Optional[str] = None, phone_number: Optional[str] = None):
     try:
+        # Collect all updates and make a single call to avoid partial failures
+        updates = {}
         if email:
-            auth.update_user(uid, email=email)
+            updates["email"] = email
         if password:
-            auth.update_user(uid, password=password)
+            updates["password"] = password
         if phone_number:
-            auth.update_user(uid, phone_number=phone_number)
+            updates["phone_number"] = phone_number
+        
+        if updates:
+            auth.update_user(uid, **updates)
     except auth.UserNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

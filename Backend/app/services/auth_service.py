@@ -46,7 +46,6 @@ class AuthService:
                 profile = Administrator(
                     user_id=user.user_id,
                     admin_id=str(uuid.uuid4()),
-                    name=data.name if data.name else "",
                     role="administrator",
                     department=data.department if data.department else "",
                 )

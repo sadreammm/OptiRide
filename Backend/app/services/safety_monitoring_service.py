@@ -169,6 +169,7 @@ class SafetyMonitoringService:
     
     def estimate_fatigue_score(self, eye_blink_rate: float, head_tilt_rate: float, 
         yawn_detected: bool, num_eyes_detected: int) -> float:
+        # TODO: Implement ML-based fatigue detection
         score = 0.0
 
         if eye_blink_rate < self.DROWSY_BLINK_RATE:

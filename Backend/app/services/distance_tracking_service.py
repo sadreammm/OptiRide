@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 import math
 from app.models.gps_track import GPSTrack
+from app.models.driver import Driver
 from app.schemas.sensor import LocationData, DistanceStats
 from geoalchemy2.functions import ST_Distance, ST_MakePoint, ST_SetSRID, ST_Transform
 from geoalchemy2.elements import WKTElement
@@ -21,25 +22,28 @@ class DistanceTrackingService:
         distance_from_last = 0.0
         cumulative_distance = 0.0
 
-        if last_point and last_point.location:
-            new_location = WKTElement(f'POINT({location_data.longitude} {location_data.latitude})', srid=4326)
+        new_location_wkt = WKTElement(f'POINT({location_data.longitude} {location_data.latitude})', srid=4326)
 
-            # ST_Distance with geography type returns meters
+        if last_point and last_point.location:
             distance_meters = self.db.query(
                 func.ST_Distance(
-                    func.ST_Transform(last_point.location, 4326),
-                    func.ST_Transform(new_location, 4326),
-                    True  # Use geography for accurate distances
+                    last_point.location,
+                    new_location_wkt,
+                    True
                 )
             ).scalar()
 
             distance_from_last = distance_meters / 1000.0 if distance_meters else 0.0
             cumulative_distance = last_point.cumulative_distance + distance_from_last
 
+        driver = self.db.query(Driver).filter(Driver.driver_id == driver_id).first()
+        if driver:
+            driver.location = new_location_wkt
+
         gps_track = GPSTrack(
             driver_id=driver_id,
             session_id=session_id,
-            location=WKTElement(f'POINT({location_data.longitude} {location_data.latitude})', srid=4326),
+            location=new_location_wkt,
             latitude=location_data.latitude,
             longitude=location_data.longitude,
             speed=location_data.speed,

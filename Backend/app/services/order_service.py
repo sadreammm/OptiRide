@@ -1,0 +1,280 @@
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from fastapi import HTTPException, status
+from typing import Optional, List, Tuple, Dict, Any
+from datetime import datetime, timedelta
+from geoalchemy2.functions import ST_Distance, ST_MakePoint, ST_X, ST_Y
+from geoalchemy2.elements import WKTElement
+from app.models.order import Order
+from app.models.driver import Driver
+from app.services.driver_service import DriverService
+from app.schemas.driver import DriverStatus
+from app.schemas.order import (
+    OrderCreate, OrderUpdate, OrderAssign, OrderPickup, OrderDeliver,
+    OrderStats, OrderStatus)
+
+class OrderService:
+    def __init__(self, db: Session):
+        self.db = db
+    
+    def create_order(self, order_data: OrderCreate) -> Order:
+        order = Order(
+            pickup=WKTElement(f'POINT({order_data.pickup_longitude} {order_data.pickup_latitude})', srid=4326),
+            dropoff=WKTElement(f'POINT({order_data.dropoff_longitude} {order_data.dropoff_latitude})', srid=4326),
+            pickup_address=order_data.pickup_address,
+            dropoff_address=order_data.dropoff_address,
+            pickup_latitude=order_data.pickup_latitude,
+            pickup_longitude=order_data.pickup_longitude,
+            dropoff_latitude=order_data.dropoff_latitude,
+            dropoff_longitude=order_data.dropoff_longitude,
+            customer_name=order_data.customer_name,
+            customer_contact=order_data.customer_contact,
+            restaurant_name=order_data.restaurant_name,
+            restaurant_contact=order_data.restaurant_contact,
+            price=order_data.price,
+            status=OrderStatus.pending.value
+        )
+        self.calculate_estimates(order)
+        self.assign_zones(order)
+
+        self.db.add(order)
+        self.db.commit()
+        self.db.refresh(order)
+
+        #TODO: Kafka event for new order
+
+        return order
+    
+    def get_order(self, order_id: str) -> Optional[Order]:
+        return self.db.query(Order).filter(Order.order_id == order_id).first()
+    
+    def update_order(self, order_id: str, data: OrderUpdate) -> Order:
+        order = self.get_order(order_id)
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        
+        if data.status:
+            order.status = data.status.value
+            
+            if data.status == OrderStatus.picked_up:
+                order.picked_up_at = datetime.utcnow()
+            elif data.status == OrderStatus.delivered:
+                order.delivered_at = datetime.utcnow()
+        
+        self.db.commit()
+        self.db.refresh(order)
+        return order
+    
+    def assign_order(self, order_id: str, assign_data: OrderAssign) -> Order:
+        order = self.get_order(order_id)
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        
+        if order.status not in [OrderStatus.pending.value, OrderStatus.assigned.value]:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order cannot be assigned in its current status")
+        
+        driver = self.db.query(Driver).filter(Driver.driver_id == assign_data.driver_id).first()
+        if not driver:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver not found")
+        
+        
+        if driver.status not in [DriverStatus.AVAILABLE.value, DriverStatus.BUSY.value]:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Driver is not available for assignment")
+        
+        # Check driver capacity - ensure driver doesn't have too many active orders
+        MAX_CONCURRENT_ORDERS = 3
+        active_orders_count = self.db.query(Order).filter(
+            Order.driver_id == assign_data.driver_id,
+            Order.status.in_([OrderStatus.assigned.value, OrderStatus.picked_up.value])
+        ).count()
+        
+        if active_orders_count >= MAX_CONCURRENT_ORDERS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail=f"Driver already has {active_orders_count} active orders. Maximum is {MAX_CONCURRENT_ORDERS}."
+            )
+        
+        order.driver_id = assign_data.driver_id
+        order.status = OrderStatus.assigned.value
+        order.assigned_at = datetime.utcnow()
+        driver.status = DriverStatus.BUSY.value
+        driver.orders_received += 1
+        order.estimated_pickup_time = assign_data.estimated_pickup_time
+        order.estimated_dropoff_time = assign_data.estimated_dropoff_time
+
+
+        self.db.commit()
+        self.db.refresh(order)
+
+        #TODO: Kafka event for order assignment
+
+        return order
+    
+    def auto_assign_order(self, order_id: str) -> Order:
+        order = self.get_order(order_id)
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        
+        driver_service = DriverService(self.db)
+        from app.schemas.driver import DriverStatus
+        nearby_drivers = driver_service.get_nearby_drivers(
+            latitude=order.pickup_latitude, longitude=order.pickup_longitude,
+            radius_km=10.0, status=DriverStatus.AVAILABLE, limit=1)
+        
+        if not nearby_drivers:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No available drivers nearby")
+        
+        closest_driver = nearby_drivers[0]
+
+        avg_speed_kmh = 50.0
+        travel_time_min = ((closest_driver.distance_meters / 1000) / avg_speed_kmh) * 60
+        pickup_time = datetime.utcnow() + timedelta(minutes=travel_time_min)
+        delivery_time = pickup_time + timedelta(minutes=order.estimated_duration_min or 25)
+
+        assign_data = OrderAssign(
+            driver_id=closest_driver.driver_id,
+            estimated_pickup_time=pickup_time,
+            estimated_dropoff_time=delivery_time
+        )
+
+        return self.assign_order(order_id, assign_data)
+    
+    def picked_up(self, order_id: str, pickup_data: OrderPickup) -> Order:
+        order = self.get_order(order_id)
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        
+        if order.status != OrderStatus.assigned.value:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order is not in assigned status")
+        
+        order.status = OrderStatus.picked_up.value
+        order.picked_up_at = datetime.utcnow()
+
+        self.db.commit()
+        self.db.refresh(order)
+
+        #TODO: Kafka event for order picked up
+        return order
+    
+    def delivered(self, order_id: str, deliver_data: OrderDeliver) -> Order:
+        order = self.get_order(order_id)
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        
+        if order.status != OrderStatus.picked_up.value:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order is not in picked up status")
+        
+        order.status = OrderStatus.delivered.value
+        order.delivered_at = datetime.utcnow()
+
+        if order.assigned_at:
+            duration = (order.delivered_at - order.assigned_at).total_seconds() / 60.0
+            order.actual_duration_min = duration
+        # TODO: Calculate actual distance using GPS data points
+        driver = self.db.query(Driver).filter(Driver.driver_id == order.driver_id).first()
+        if driver:
+            driver.status = DriverStatus.AVAILABLE.value
+
+        self.db.commit()
+        self.db.refresh(order)
+
+        #TODO: Kafka event for order delivered
+        return order
+    
+    def get_orders(
+        self, 
+        status: Optional[OrderStatus] = None,
+        driver_id: Optional[str] = None,
+        pickup_zone: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[Order]:
+        query = self.db.query(Order)
+        if status:
+            query = query.filter(Order.status == status.value)
+        if driver_id:
+            query = query.filter(Order.driver_id == driver_id)
+        if pickup_zone:
+            query = query.filter(Order.pickup_zone == pickup_zone)
+
+        orders = query.offset(skip).limit(limit).all()
+        return orders
+        
+    def get_pending_orders(self, zone_id: Optional[str] = None) -> List[Order]:
+        query = self.db.query(Order).filter(Order.status == OrderStatus.pending.value)
+        if zone_id:
+            query = query.filter(Order.pickup_zone == zone_id)
+        return query.all()
+    
+    def get_active_orders_for_driver(self, driver_id: str) -> List[Order]:
+        return self.db.query(Order).filter(
+            Order.driver_id == driver_id,
+            Order.status.in_([OrderStatus.assigned.value, OrderStatus.picked_up.value])
+        ).all()
+    
+    def get_order_stats(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> OrderStats:
+        query = self.db.query(Order)
+        
+        if start_date:
+            query = query.filter(Order.created_at >= start_date)
+        if end_date:
+            query = query.filter(Order.created_at <= end_date)
+
+        total = query.count()
+        pending = query.filter(Order.status == "pending").count()
+        assigned = query.filter(Order.status == "assigned").count()
+        picked_up = query.filter(Order.status == "picked_up").count()
+        delivered = query.filter(Order.status == "delivered").count()
+        
+        delivered_orders = query.filter(Order.status == "delivered")
+        
+        avg_delivery_time = delivered_orders.with_entities(
+            func.avg(Order.actual_duration_min)
+        ).scalar()
+        
+        avg_distance = delivered_orders.with_entities(
+            func.avg(Order.actual_distance_km)
+        ).scalar()
+        
+        total_revenue = delivered_orders.with_entities(
+            func.sum(Order.delivery_fee)
+        ).scalar() or 0.0
+        
+        
+        return OrderStats(
+            total_orders=total,
+            pending=pending,
+            assigned=assigned,
+            picked_up=picked_up,
+            delivered=delivered,
+            avg_delivery_time_min=round(avg_delivery_time, 1) if avg_delivery_time else None,
+            avg_distance_km=round(avg_distance, 2) if avg_distance else None,
+            total_revenue=round(total_revenue, 2)
+        )
+    
+    def calculate_estimates(self, order: Order):
+        # TODO: Use Google Maps Distance Matrix API for accurate distance calculation
+        point1 = ST_MakePoint(order.pickup_longitude, order.pickup_latitude)
+        point2 = ST_MakePoint(order.dropoff_longitude, order.dropoff_latitude)
+
+        distance_meters = self.db.query(
+            ST_Distance(point1, point2, True)
+        ).scalar()
+
+        distance_km = distance_meters / 1000.0
+        order.estimated_distance_km = round(distance_km * 1.3, 2)
+
+        avg_speed_kmh = 45.0
+        order.estimated_duration_min = round((order.estimated_distance_km / avg_speed_kmh) * 60, 1)
+
+        base_fee = 7.0
+        per_km_rate = 1.2
+        order.delivery_fee = round(base_fee + (per_km_rate * order.estimated_distance_km), 2)
+
+    def assign_zones(self, order: Order):
+        # TODO: Implement zone assignment using clustering
+        return
