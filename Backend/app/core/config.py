@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Big Data Storage (AWS S3) Settings
 
     # Streaming Service (Kafka) Settings
+    KAFKA_BOOTSTRAP_SERVERS: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 
     # External API Settings
     GOOGLE_MAPS_API_KEY: str = os.getenv("GOOGLE_MAPS_API_KEY", "")

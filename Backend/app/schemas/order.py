@@ -33,11 +33,11 @@ class OrderUpdate(BaseModel):
     
 class OrderAssign(BaseModel):
     driver_id: str
-    estimated_distance_km: Optional[float] = None
-    estimated_duration_min: Optional[float] = None
+    distance_km: Optional[float] = None
+    duration_min: Optional[float] = None
     delivery_fee: Optional[float] = None
-    estimated_pickup_time: Optional[datetime] = None
-    estimated_dropoff_time: Optional[datetime] = None
+    pickup_time: Optional[datetime] = None
+    dropoff_time: Optional[datetime] = None
 
 
 class OrderPickup(BaseModel):

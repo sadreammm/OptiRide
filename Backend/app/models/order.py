@@ -30,17 +30,14 @@ class Order(Base):
     price = Column(Float, default=0.0)
     
 
-    estimated_distance_km = Column(Float, nullable=True)
-    estimated_duration_min = Column(Float, nullable=True)
-    estimated_pickup_time = Column(DateTime, nullable=True)
-    estimated_dropoff_time = Column(DateTime, nullable=True)
-    delivery_fee = Column(Float, default=0.0)
-
-    actual_distance_km = Column(Float, nullable=True)
-    actual_duration_min = Column(Float, nullable=True)
+    distance_km = Column(Float, nullable=True)
+    duration_min = Column(Float, nullable=True)
+    pickup_time = Column(DateTime, nullable=True)
+    dropoff_time = Column(DateTime, nullable=True)
 
     pickup_zone = Column(String, nullable=True)
     dropoff_zone = Column(String, nullable=True)
+    route_polyline = Column(String, nullable=True)
 
     assignment_id = Column(String, ForeignKey('assignments.assignment_id'), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

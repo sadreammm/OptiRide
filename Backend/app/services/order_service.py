@@ -5,6 +5,9 @@ from typing import Optional, List, Tuple, Dict, Any
 from datetime import datetime, timedelta
 from geoalchemy2.functions import ST_Distance, ST_MakePoint, ST_X, ST_Y
 from geoalchemy2.elements import WKTElement
+import googlemaps
+from app.core.config import settings
+from app.core.kafka import kafka_producer
 from app.models.order import Order
 from app.models.driver import Driver
 from app.services.driver_service import DriverService
@@ -12,6 +15,9 @@ from app.schemas.driver import DriverStatus
 from app.schemas.order import (
     OrderCreate, OrderUpdate, OrderAssign, OrderPickup, OrderDeliver,
     OrderStats, OrderStatus)
+
+
+
 
 class OrderService:
     def __init__(self, db: Session):
@@ -34,14 +40,25 @@ class OrderService:
             price=order_data.price,
             status=OrderStatus.pending.value
         )
-        self.calculate_estimates(order)
+        self.calculate_order_info(order)
         self.assign_zones(order)
 
         self.db.add(order)
         self.db.commit()
         self.db.refresh(order)
 
-        #TODO: Kafka event for new order
+        kafka_producer.publish("order-created", {
+            "order_id": order.order_id,
+            "driver_id": order.driver_id,
+            "pickup_zone": order.pickup_zone,
+            "dropoff_zone": order.dropoff_zone,
+            "pickup_latitude": order.pickup_latitude,
+            "pickup_longitude": order.pickup_longitude,
+            "dropoff_latitude": order.dropoff_latitude,
+            "dropoff_longitude": order.dropoff_longitude,
+            "status": order.status,
+            "created_at": str(order.created_at)
+        })
 
         return order
     
@@ -99,14 +116,18 @@ class OrderService:
         order.assigned_at = datetime.utcnow()
         driver.status = DriverStatus.BUSY.value
         driver.orders_received += 1
-        order.estimated_pickup_time = assign_data.estimated_pickup_time
-        order.estimated_dropoff_time = assign_data.estimated_dropoff_time
+        order.pickup_time = assign_data.pickup_time
+        order.dropoff_time = assign_data.dropoff_time
 
 
         self.db.commit()
         self.db.refresh(order)
 
-        #TODO: Kafka event for order assignment
+        kafka_producer.publish("order-assigned", {
+            "order_id": order.order_id,
+            "driver_id": order.driver_id,
+            "assigned_at": str(order.assigned_at)
+        })
 
         return order
     
@@ -128,13 +149,13 @@ class OrderService:
         avg_speed_kmh = 50.0
         travel_time_min = ((closest_driver.distance_meters / 1000) / avg_speed_kmh) * 60
         pickup_time = datetime.utcnow() + timedelta(minutes=travel_time_min)
-        delivery_time = pickup_time + timedelta(minutes=order.estimated_duration_min or 25)
+        delivery_time = pickup_time + timedelta(minutes=order.duration_min or 25)
 
         # Offer to driver (not assigned yet - driver must accept)
         order.driver_id = closest_driver.driver_id
         order.status = OrderStatus.offered.value  # Changed from assigned
-        order.estimated_pickup_time = pickup_time
-        order.estimated_dropoff_time = delivery_time
+        order.pickup_time = pickup_time
+        order.dropoff_time = delivery_time
         
         self.db.commit()
         self.db.refresh(order)
@@ -207,8 +228,8 @@ class OrderService:
         # Reject the order - return to pending
         order.status = OrderStatus.pending.value
         order.driver_id = None
-        order.estimated_pickup_time = None
-        order.estimated_dropoff_time = None
+        order.pickup_time = None
+        order.dropoff_time = None
         
         self.db.commit()
         self.db.refresh(order)
@@ -231,7 +252,11 @@ class OrderService:
         self.db.commit()
         self.db.refresh(order)
 
-        #TODO: Kafka event for order picked up
+        kafka_producer.publish("order-picked-up", {
+            "order_id": order.order_id,
+            "driver_id": order.driver_id,
+            "picked_up_at": str(order.picked_up_at)
+        })
         return order
     
     def delivered(self, order_id: str, deliver_data: OrderDeliver) -> Order:
@@ -256,7 +281,14 @@ class OrderService:
         self.db.commit()
         self.db.refresh(order)
 
-        #TODO: Kafka event for order delivered
+        kafka_producer.publish("order-delivered", {
+            "order_id": order.order_id,
+            "driver_id": order.driver_id,
+            "price": order.price,
+            "distance_km": order.distance_km,
+            "duration_min": order.duration_min,
+            "delivered_at": str(order.delivered_at)
+        })
         return order
     
     def get_orders(
@@ -334,25 +366,57 @@ class OrderService:
             total_revenue=round(total_revenue, 2)
         )
     
-    def calculate_estimates(self, order: Order):
-        # TODO: Use Google Maps Distance Matrix API for accurate distance calculation
-        point1 = ST_MakePoint(order.pickup_longitude, order.pickup_latitude)
-        point2 = ST_MakePoint(order.dropoff_longitude, order.dropoff_latitude)
+    def calculate_order_info(self, order: Order):
+        try:
+            gmaps = googlemaps.Client(key=settings.GOOGLE_MAPS_API_KEY)
+            directions = gmaps.directions(
+                (order.pickup_latitude, order.pickup_longitude),
+                (order.dropoff_latitude, order.dropoff_longitude),
+                mode="driving",
+                departure_time="now"
+            )
 
-        distance_meters = self.db.query(
-            ST_Distance(point1, point2, True)
-        ).scalar()
+            if directions:
+                leg = directions[0]['legs'][0]
+                distance_km = leg['distance']['value'] / 1000.0
+                duration_data = leg.get('duration_in_traffic', leg.get('duration', {}))
+                duration_min = duration_data.get('value', 0) / 60.0
+                
+                order.distance_km = round(distance_km, 2)
+                order.duration_min = round(duration_min, 1)
+                order.route_polyline = directions[0]['overview_polyline']['points']
+                print(f"Maps API Response: {distance_km} km, {duration_min} min")
+            else:
+                raise Exception("No directions returned")
 
-        distance_km = distance_meters / 1000.0
-        order.estimated_distance_km = round(distance_km * 1.3, 2)
+        except Exception as e:
+            print(f"Google Maps API Error: {e}")
+            print("Using fallback distance calculation")
 
-        avg_speed_kmh = 45.0
-        order.estimated_duration_min = round((order.estimated_distance_km / avg_speed_kmh) * 60, 1)
+            distance_meters = self.db.query(
+                ST_Distance(
+                    WKTElement(f'POINT({order.pickup_longitude} {order.pickup_latitude})', srid=4326),
+                    WKTElement(f'POINT({order.dropoff_longitude} {order.dropoff_latitude})', srid=4326),
+                    True
+                )
+            ).scalar()
+
+            if distance_meters:
+                distance_km = distance_meters / 1000.0
+                order.distance_km = round(distance_km * 1.3, 2)
+            else:
+                order.distance_km = 5.0
+
+            avg_speed_kmh = 45.0
+            order.duration_min = round((order.distance_km / avg_speed_kmh) * 60, 1)
 
         base_fee = 7.0
         per_km_rate = 1.2
-        order.delivery_fee = round(base_fee + (per_km_rate * order.estimated_distance_km), 2)
+        order.price = round(base_fee + (order.distance_km * per_km_rate), 2)
 
     def assign_zones(self, order: Order):
         # TODO: Implement zone assignment using clustering
         return
+    
+    
+        

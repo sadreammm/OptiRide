@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.routers import auth, driver, safety, order
+from app.core.socket_manager import sio_app
 
 app = FastAPI(
     title="Optiride Backend API",
@@ -26,3 +27,5 @@ app.include_router(order.router, prefix="/orders", tags=["Orders"])
 @app.get("/")
 async def root():
     return {"message": "Optiride Backend API is running."}
+
+app.mount("/ws", sio_app)
