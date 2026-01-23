@@ -7,7 +7,7 @@ import uuid
 from app.models.user import User, Administrator
 from app.models.driver import Driver
 from app.core.security import (
-    verify_firebase_token,
+    verify_firebase_token_string,
     create_firebase_user,
     update_firebase_user,
     delete_firebase_user
@@ -75,7 +75,15 @@ class AuthService:
     
     @staticmethod
     def login(db: Session, token_data: dict) -> LoginResponse:
-        data = verify_firebase_token(token_data)
+        # Extract the Firebase ID token from the request body
+        token = token_data.get("credentials")
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing credentials in request body",
+            )
+        
+        data = verify_firebase_token_string(token)
         user_id = data.get("uid")
 
         user = db.query(User).filter(User.user_id == user_id).first()
@@ -92,7 +100,7 @@ class AuthService:
         return LoginResponse(
             user=UserResponse.model_validate(user),
             token=TokenResponse(
-                token=token_data,
+                token=token,
                 token_type="bearer",
                 expires_in=3600,
                 user_id=user.user_id,
