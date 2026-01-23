@@ -1,12 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.db.database import get_db
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 from app.services.safety_monitoring_service import SafetyMonitoringService
 from app.services.distance_tracking_service import DistanceTrackingService
 from app.core.dependencies import get_current_driver
 from app.schemas.sensor import SensorDataBatch, DistanceStats
+from app.models.alert import Alert
+from app.models.driver import Driver
+from app.schemas.alert import AlertResponse, AlertAcknowledge
+from geoalchemy2.functions import ST_X, ST_Y
+from sqlalchemy import desc
 
 router = APIRouter()
 
@@ -61,3 +66,82 @@ def get_today_distance(
     distance_service = DistanceTrackingService(db)
     total_distance = distance_service.get_today_distance(driver_id=current_driver.driver_id)
     return {"driver_id": current_driver.driver_id, "date": datetime.utcnow().date(), "total_distance_km": total_distance}
+
+@router.get("/alerts", response_model=List[AlertResponse])
+def get_alerts(
+    driver_id: Optional[str] = None,
+    alert_type: Optional[str] = None,
+    acknowledged: Optional[bool] = None,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    query = db.query(
+        Alert.alert_id,
+        Alert.driver_id,
+        Alert.alert_type,
+        Alert.severity,
+        Alert.timestamp,
+        Alert.acknowledged,
+        ST_X(Alert.location).label("longitude"),
+        ST_Y(Alert.location).label("latitude")
+    )
+    
+    if driver_id:
+        query = query.filter(Alert.driver_id == driver_id)
+    if alert_type:
+        query = query.filter(Alert.alert_type == alert_type)
+    if acknowledged is not None:
+        query = query.filter(Alert.acknowledged == acknowledged)
+        
+    alerts = query.order_by(desc(Alert.timestamp)).offset(skip).limit(limit).all()
+    
+    return [
+        {
+            "alert_id": a.alert_id,
+            "driver_id": a.driver_id,
+            "alert_type": a.alert_type,
+            "severity": a.severity,
+            "timestamp": a.timestamp,
+            "acknowledged": a.acknowledged,
+            "longitude": a.longitude,
+            "latitude": a.latitude
+        }
+        for a in alerts
+    ]
+
+@router.patch("/alerts/{alert_id}/acknowledge", response_model=AlertResponse)
+def acknowledge_alert(
+    alert_id: str,
+    data: AlertAcknowledge,
+    db: Session = Depends(get_db)
+):
+    alert = db.query(Alert).filter(Alert.alert_id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
+    
+    alert.acknowledged = data.acknowledged
+    db.commit()
+    db.refresh(alert)
+
+    result = db.query(
+        Alert.alert_id,
+        Alert.driver_id,
+        Alert.alert_type,
+        Alert.severity,
+        Alert.timestamp,
+        Alert.acknowledged,
+        ST_X(Alert.location).label("longitude"),
+        ST_Y(Alert.location).label("latitude")
+    ).filter(Alert.alert_id == alert_id).first()
+    
+    return {
+        "alert_id": result.alert_id,
+        "driver_id": result.driver_id,
+        "alert_type": result.alert_type,
+        "severity": result.severity,
+        "timestamp": result.timestamp,
+        "acknowledged": result.acknowledged,
+        "longitude": result.longitude,
+        "latitude": result.latitude
+    }

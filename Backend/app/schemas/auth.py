@@ -12,6 +12,9 @@ class LoginRequest(BaseModel):
     email : EmailStr
     password : str
 
+class FirebaseLoginRequest(BaseModel):
+    credentials : str  # Firebase ID token
+
 class PhoneLoginRequest(BaseModel):
     phone_number : str
     otp : str

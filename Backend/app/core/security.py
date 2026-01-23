@@ -20,6 +20,27 @@ def verify_firebase_token(creds : HTTPAuthorizationCredentials = Depends(securit
     try:
         decoded_token = auth.verify_id_token(token)
         return decoded_token
+    except auth.InvalidIdTokenError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Firebase token",
+        )
+    except auth.ExpiredIdTokenError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Expired Firebase token",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
+
+
+def verify_firebase_token_string(token: str) -> dict:
+    try:
+        decoded_token = auth.verify_id_token(token)
+        return decoded_token
     except auth.InvalidIdTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

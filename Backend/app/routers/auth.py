@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.core.dependencies import get_current_admin, get_current_user
 from app.services.auth_service import AuthService
-from app.schemas.auth import LoginRequest, AdminCreateUserRequest, LoginResponse, UserResponse
+from app.schemas.auth import LoginRequest, AdminCreateUserRequest, LoginResponse, UserResponse, FirebaseLoginRequest
 
 router = APIRouter()
 

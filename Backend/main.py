@@ -1,8 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.db.database import engine, Base
 from app.routers import auth, driver, safety, order
 from app.core.socket_manager import sio_app
+from app.models import alert, analytics, assignment, break_model, \
+    driver as driver_model, event, gps_track, order as order_model, sensor_record, user, zone
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Optiride Backend API",
@@ -29,3 +34,6 @@ async def root():
     return {"message": "Optiride Backend API is running."}
 
 app.mount("/ws", sio_app)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
