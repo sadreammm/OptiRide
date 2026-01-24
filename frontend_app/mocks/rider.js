@@ -1,0 +1,16 @@
+export const rider = {
+  id: '1',
+  name: 'Ahmed Hassan',
+  riderId: 'RD-2847',
+  phone: '+971 50 123 4567',
+  vehicleType: 'Motorcycle',
+  vehiclePlate: 'Dubai 12345',
+  status: 'online',
+  currentZone: 'A1',
+  assignedZone: 'A3',
+  shiftStart: '12:00 PM',
+  shiftEnd: '8:00 PM',
+  shiftType: 'Evening',
+  deliveriesCompleted: 12,
+  totalDeliveries: 20,
+};
