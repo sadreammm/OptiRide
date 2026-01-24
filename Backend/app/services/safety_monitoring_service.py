@@ -15,6 +15,7 @@ from app.schemas.sensor import (
     AccelerometerData, GyroscopeData
 )
 from app.schemas.alert import AlertCreate, AlertType, AlertSeverity
+from app.core.kafka import kafka_producer
 
 class SafetyMonitoringService:
     def __init__(self, db: Session):
@@ -411,7 +412,17 @@ class SafetyMonitoringService:
         if alerts:
             self.db.commit()
 
-            # TODO: Publish to kafka
+            for alert in alerts:
+                kafka_producer.publish("safety-alerts", {
+                    "alert_id": alert.alert_id,
+                    "driver_id": alert.driver_id,
+                    "alert_type": alert.alert_type,
+                    "severity": alert.severity,
+                    "latitude": location_data.latitude,
+                    "longitude": location_data.longitude,
+                    "acknowledged": alert.acknowledged,
+                    "timestamp": str(datetime.now())
+                })
         return alerts
     
     

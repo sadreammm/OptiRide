@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 from geoalchemy2.functions import ST_Distance, ST_X, ST_Y
 from geoalchemy2.elements import WKTElement
 from datetime import datetime
+from app.core.kafka import kafka_producer
 from app.models.driver import Driver
 from app.models.order import Order
 from app.models.alert import Alert
@@ -12,6 +13,7 @@ from app.schemas.driver import (
     DriverPerformanceStats, NearbyDriverResponse,
     ShiftStart, ShiftEnd, ShiftSummary, BreakRequest, DriverStatus, DutyStatus
 )
+
 
 class DriverService:
     def __init__(self, db: Session):
@@ -85,7 +87,16 @@ class DriverService:
         driver.location = point_wkt
 
         self.db.commit()
-        # TODO : Implement kafka publishing for location updates
+
+        kafka_producer.publish("driver-location", {
+            "driver_id": driver.driver_id,
+            "latitude": location_data.latitude,
+            "longitude": location_data.longitude,
+            "speed": location_data.speed,
+            "heading": location_data.heading,
+            "status": driver.status,
+            "timestamp": str(datetime.now())
+        })
 
         return driver
     
@@ -348,10 +359,17 @@ class DriverService:
                 detail="Driver not found"
             )
         
+        old_zone = driver.current_zone
         driver.current_zone = new_zone
         self.db.commit()
         self.db.refresh(driver)
-        # TODO : Implement kafka publishing for zone updates
+
+        kafka_producer.publish("driver-zone", {
+            "driver_id": driver.driver_id,
+            "old_zone": old_zone,
+            "new_zone": new_zone,
+            "timestamp": str(datetime.now())
+        })
         return driver
         
     def get_drivers_by_zone(self, zone: str) -> List[Driver]:

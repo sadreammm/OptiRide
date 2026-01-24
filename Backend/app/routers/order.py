@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 from app.db.database import get_db
 from app.core.dependencies import get_current_driver, get_current_admin, get_current_user
+from app.core.socket_manager import socket_manager, emit_sync
 from app.models.user import User
 from app.models.driver import Driver
 from app.services.order_service import OrderService
@@ -13,18 +14,27 @@ from geoalchemy2.functions import ST_X, ST_Y
 router = APIRouter()
 
 @router.post("/", response_model=OrderResponse)
-def create_order(
+async def create_order(
     order_data: OrderCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     order_service = OrderService(db)
     order = order_service.create_order(order_data)
+    
+    # Notify zone about new order
+    if order.pickup_zone:
+        await socket_manager.broadcast_new_order_to_zone(order.pickup_zone, {
+            "order_id": order.order_id,
+            "pickup_address": order.pickup_address,
+            "dropoff_address": order.dropoff_address,
+            "price": order.price
+        })
 
     return order
 
 @router.post("/webhook/new-order", response_model=OrderResponse)
-def webhook_create_order(
+async def webhook_create_order(
     order_data: OrderCreate,
     auto_assign: bool = False,
     db: Session = Depends(get_db)
@@ -47,17 +57,31 @@ def webhook_create_order(
     }
     """
     order_service = OrderService(db)
-    
-    # Create the order
     order = order_service.create_order(order_data)
     
     if auto_assign:
         try:
             order = order_service.auto_assign_order(order.order_id)
-        except HTTPException as e:
+            # Notify driver about new order offer
+            if order.driver_id:
+                await socket_manager.notify_new_order_to_driver(order.driver_id, {
+                    "order_id": order.order_id,
+                    "pickup_address": order.pickup_address,
+                    "dropoff_address": order.dropoff_address,
+                    "price": order.price,
+                    "distance_km": order.distance_km,
+                    "duration_min": order.duration_min
+                })
+        except HTTPException:
             pass
     
-    # TODO: Implement real-time notification to drivers (Kafka)
+    # Notify zone about new order
+    if order.pickup_zone:
+        await socket_manager.broadcast_new_order_to_zone(order.pickup_zone, {
+            "order_id": order.order_id,
+            "pickup_address": order.pickup_address,
+            "price": order.price
+        })
     
     return order
 
@@ -113,33 +137,92 @@ def get_order_by_id(
     return order
 
 @router.patch("/{order_id}", response_model=OrderResponse)
-def update_order(
+async def update_order(
     order_id: str,
     order_data: OrderUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
     order_service = OrderService(db)
-    return order_service.update_order(order_id, order_data)
+    order = order_service.update_order(order_id, order_data)
+    
+    # Notify about order update
+    await socket_manager.notify_order_update(order_id, {"status": order.status})
+    return order
     
 @router.post("/{order_id}/assign", response_model=OrderResponse)
-def assign_order(
+async def assign_order(
     order_id: str,
     assign_data: OrderAssign,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
     order_service = OrderService(db)
-    return order_service.assign_order(order_id, assign_data)
+    order = order_service.assign_order(order_id, assign_data)
+    
+    # Notify driver about assignment
+    await socket_manager.notify_new_order_to_driver(order.driver_id, {
+        "order_id": order.order_id,
+        "pickup_address": order.pickup_address,
+        "dropoff_address": order.dropoff_address,
+        "price": order.price
+    })
+    return order
 
 @router.post("/{order_id}/auto-assign", response_model=OrderResponse)
-def auto_assign_order(
+async def auto_assign_order(
     order_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
     order_service = OrderService(db)
-    return order_service.auto_assign_order(order_id)
+    order = order_service.auto_assign_order(order_id)
+    
+    # Notify driver about new order offer
+    if order.driver_id:
+        await socket_manager.notify_new_order_to_driver(order.driver_id, {
+            "order_id": order.order_id,
+            "pickup_address": order.pickup_address,
+            "dropoff_address": order.dropoff_address,
+            "price": order.price,
+            "distance_km": order.distance_km
+        })
+    return order
+
+@router.post("/{order_id}/accept", response_model=OrderResponse)
+async def accept_order(
+    order_id: str,
+    db: Session = Depends(get_db),
+    driver: Driver = Depends(get_current_driver)
+):
+    order_service = OrderService(db)
+    order = order_service.accept_order(order_id=order_id, driver_id=driver.driver_id)
+    
+    # Notify customer that order was accepted
+    await socket_manager.notify_order_accepted(order.order_id, driver.driver_id, driver.name)
+    return order
+
+@router.post("/{order_id}/reject", response_model=OrderResponse)
+async def reject_order(
+    order_id: str,
+    db: Session = Depends(get_db),
+    driver: Driver = Depends(get_current_driver)
+):
+    order_service = OrderService(db)
+    order = order_service.reject_order(order_id=order_id, driver_id=driver.driver_id)
+    return order
+
+@router.get("/offered/me", response_model=List[OrderResponse])
+def get_my_offered_orders(
+    db: Session = Depends(get_db),
+    driver: Driver = Depends(get_current_driver)
+):
+    from app.models.order import Order
+    orders = db.query(Order).filter(
+        Order.driver_id == driver.driver_id,
+        Order.status == OrderStatus.offered.value
+    ).all()
+    return orders
 
 @router.get("/driver/orders")
 def get_driver_orders(
@@ -154,21 +237,29 @@ def get_driver_orders(
     }
 
 @router.post("/{order_id}/pickup", response_model=OrderResponse)
-def pickup_order(
+async def pickup_order(
     order_id: str,
     pickup_data: OrderPickup,
     db: Session = Depends(get_db),
     current_driver: Driver = Depends(get_current_driver)
 ):
     order_service = OrderService(db)
-    return order_service.picked_up(order_id, pickup_data)
+    order = order_service.picked_up(order_id, pickup_data)
+    
+    # Notify customer about pickup
+    await socket_manager.notify_order_picked_up(order.order_id)
+    return order
 
 @router.post("/{order_id}/deliver", response_model=OrderResponse)
-def deliver_order(
+async def deliver_order(
     order_id: str,
     deliver_data: OrderDeliver,
     db: Session = Depends(get_db),
     current_driver: Driver = Depends(get_current_driver)
 ):
     order_service = OrderService(db)
-    return order_service.delivered(order_id, deliver_data)
+    order = order_service.delivered(order_id, deliver_data)
+    
+    # Notify customer about delivery
+    await socket_manager.notify_order_delivered(order.order_id)
+    return order

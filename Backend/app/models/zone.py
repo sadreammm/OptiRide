@@ -9,6 +9,7 @@ class Zone(Base):
 
     zone_id = Column(String, primary_key=True)
     centroid = Column(Geometry('POINT'), nullable=False)
+    boundary = Column(Geometry('POLYGON'), nullable=True)  # Zone boundary for point-in-polygon checks
     demand_score = Column(Float, default=0.0)
     active_drivers = Column(Integer, default=0)
 

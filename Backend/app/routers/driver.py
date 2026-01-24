@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from geoalchemy2.functions import ST_X, ST_Y
 from app.db.database import get_db
 from app.core.dependencies import get_current_driver, get_current_user, get_current_admin
+from app.core.socket_manager import socket_manager, emit_sync
 from app.services.driver_service import DriverService
 from app.models.driver import Driver
 from app.models.user import User
@@ -128,7 +129,7 @@ def get_my_performance_stats(
     return stats
 
 @router.post("/me/location")
-def update_my_location(
+async def update_my_location(
     location_data: LocationSchema,
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
@@ -138,6 +139,13 @@ def update_my_location(
         driver_id=driver.driver_id,
         location_data=location_data
     )
+
+    await socket_manager.notify_driver_location(driver.driver_id, {
+        "latitude": location_data.latitude,
+        "longitude": location_data.longitude,
+        "speed": location_data.speed,
+        "heading": location_data.heading
+    })
     return {"detail": "Location updated successfully"}
 
 @router.get("/nearby-drivers")
@@ -155,7 +163,7 @@ def get_nearby_drivers(
         latitude=latitude, longitude=longitude, radius_km=radius_km, status=status, limit=limit)
 
 @router.post("/me/status")
-def update_my_status(
+async def update_my_status(
     status_data: StatusUpdate,
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
@@ -165,6 +173,8 @@ def update_my_status(
         driver_id=driver.driver_id,
         new_status=status_data.status
     )
+    
+    await socket_manager.notify_driver_status_change(driver.driver_id, status_data.status.value)
     return {"detail": "Status updated successfully"}
 
 @router.post("/me/shift/start", response_model=DriverResponse)
