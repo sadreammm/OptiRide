@@ -272,7 +272,7 @@ class OrderService:
 
         if order.assigned_at:
             duration = (order.delivered_at - order.assigned_at).total_seconds() / 60.0
-            order.actual_duration_min = duration
+            order.duration_min = duration
         # TODO: Calculate actual distance using GPS data points
         driver = self.db.query(Driver).filter(Driver.driver_id == order.driver_id).first()
         if driver:
@@ -343,15 +343,15 @@ class OrderService:
         delivered_orders = query.filter(Order.status == "delivered")
         
         avg_delivery_time = delivered_orders.with_entities(
-            func.avg(Order.actual_duration_min)
+            func.avg(Order.duration_min)
         ).scalar()
         
         avg_distance = delivered_orders.with_entities(
-            func.avg(Order.actual_distance_km)
+            func.avg(Order.distance_km)
         ).scalar()
         
         total_revenue = delivered_orders.with_entities(
-            func.sum(Order.delivery_fee)
+            func.sum(Order.price)
         ).scalar() or 0.0
         
         
