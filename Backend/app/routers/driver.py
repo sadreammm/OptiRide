@@ -22,7 +22,7 @@ def create_driver(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
-    driver_service = DriverService()
+    driver_service = DriverService(db)
     user = db.query(User).filter(User.user_id == driver_data.user_id).first()
     if not user:
         raise HTTPException(
@@ -36,15 +36,15 @@ def create_driver(
             detail="Associated user is not of type 'driver'"
         )
     
-    exists = driver_service.get_driver_by_user_id(db=db, user_id=driver_data.user_id)
+    exists = driver_service.get_driver_by_user_id(user_id=driver_data.user_id)
     if exists:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Driver profile already exists for this user"
         )
     
-    driver = driver_service.create_driver(db=db, driver_data=driver_data)
-    return DriverResponse.from_orm(driver)
+    driver = driver_service.create_driver(driver_data=driver_data)
+    return DriverResponse.model_validate(driver)
 
 @router.get("/", response_model=DriverListResponse)
 def list_drivers(
@@ -53,11 +53,12 @@ def list_drivers(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
-    driver_service = DriverService()
-    drivers, total = driver_service.list_drivers(db=db, skip=skip, limit=limit)
+    driver_service = DriverService(db)
+    total = db.query(Driver).count()
+    drivers = driver_service.list_drivers(skip=skip, limit=limit)
     return DriverListResponse(
         total=total,
-        drivers=[DriverResponse.from_orm(driver) for driver in drivers]
+        drivers=[DriverResponse.model_validate(driver) for driver in drivers]
     )
 
 @router.get("/active-locations")
@@ -65,8 +66,8 @@ def get_active_driver_locations(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
-    driver_service = DriverService()
-    locations = driver_service.get_active_driver_locations(db=db)
+    driver_service = DriverService(db)
+    locations = driver_service.get_all_active_drivers_locations()
     return locations
 
 @router.get("/stats/summary")
@@ -74,14 +75,14 @@ def get_drivers_summary(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
-    driver_service = DriverService()
+    driver_service = DriverService(db)
     
-    total_drivers = driver_service.count_total_drivers(db=db)
-    available_drivers = driver_service.count_drivers_by_status(db=db, status=DriverStatus.AVAILABLE)
-    busy_drivers = driver_service.count_drivers_by_status(db=db, status=DriverStatus.BUSY)
-    on_break_drivers = driver_service.count_drivers_by_status(db=db, status=DriverStatus.ON_BREAK)
-    offline_drivers = driver_service.count_drivers_by_status(db=db, status=DriverStatus.OFFLINE)
-    on_duty_drivers = driver_service.count_drivers_by_duty_status(db=db, duty_status=DutyStatus.ON_DUTY)
+    total_drivers = driver_service.count_total_drivers()
+    available_drivers = driver_service.count_drivers_by_status(status=DriverStatus.AVAILABLE)
+    busy_drivers = driver_service.count_drivers_by_status(status=DriverStatus.BUSY)
+    on_break_drivers = driver_service.count_drivers_by_status(status=DriverStatus.ON_BREAK)
+    offline_drivers = driver_service.count_drivers_by_status(status=DriverStatus.OFFLINE)
+    on_duty_drivers = driver_service.count_drivers_by_duty_status(duty_status=DutyStatus.ON_DUTY)
 
     return {
         "total_drivers": total_drivers,
@@ -97,8 +98,8 @@ def get_my_driver_profile(
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
 ):
-    driver_service = DriverService()
-    driver_profile = driver_service.get_driver_by_user_id(db=db, user_id=driver.user_id)
+    driver_service = DriverService(db)
+    driver_profile = driver_service.get_driver_by_user_id(user_id=driver.user_id)
     if not driver_profile:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -106,7 +107,7 @@ def get_my_driver_profile(
         )
     driver_profile.email = db.query(User).filter(User.user_id == driver.user_id).first().email
     driver_profile.phone_number = db.query(User).filter(User.user_id == driver.user_id).first().phone_number
-    return DriverResponse.from_orm(driver_profile)
+    return DriverResponse.model_validate(driver_profile)
 
 @router.patch("/me", response_model=DriverResponse)
 def update_my_driver_profile(
@@ -114,16 +115,16 @@ def update_my_driver_profile(
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
 ):
-    driver_service = DriverService()
-    return driver_service.update_driver(db=db, driver=driver, update_data=driver_data)
+    driver_service = DriverService(db)
+    return driver_service.update_driver(driver_id=driver.driver_id, update_data=driver_data)
     
 @router.get("/me/performance-stats", response_model=DriverPerformanceStats)
 def get_my_performance_stats(
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
 ):
-    driver_service = DriverService()
-    stats = driver_service.get_performance_stats(db=db, driver_id=driver.driver_id)
+    driver_service = DriverService(db)
+    stats = driver_service.get_performance_stats(driver_id=driver.driver_id)
     return stats
 
 @router.post("/me/location")
@@ -132,9 +133,8 @@ def update_my_location(
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
 ):
-    driver_service = DriverService()
+    driver_service = DriverService(db)
     driver_service.update_location(
-        db=db,
         driver_id=driver.driver_id,
         location_data=location_data
     )
@@ -150,9 +150,9 @@ def get_nearby_drivers(
     db: Session = Depends(get_db),
     user = Depends(get_current_user)
 ):
-    driver_service = DriverService()
+    driver_service = DriverService(db)
     return driver_service.get_nearby_drivers(
-        db=db, latitude=latitude, longitude=longitude, radius_km=radius_km, status=status, limit=limit)
+        latitude=latitude, longitude=longitude, radius_km=radius_km, status=status, limit=limit)
 
 @router.post("/me/status")
 def update_my_status(
@@ -160,11 +160,10 @@ def update_my_status(
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
 ):
-    driver_service = DriverService()
+    driver_service = DriverService(db)
     driver_service.update_status(
-        db=db,
         driver_id=driver.driver_id,
-        status=status_data.status
+        new_status=status_data.status
     )
     return {"detail": "Status updated successfully"}
 
@@ -174,11 +173,10 @@ def start_my_shift(
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
 ):
-    driver_service = DriverService()
+    driver_service = DriverService(db)
     return driver_service.start_shift(
-        db=db,
         driver_id=driver.driver_id,
-        shift_data=shift_data
+        shift_start=shift_data
     )
 
 @router.post("/me/shift/end", response_model=ShiftSummary)
@@ -187,11 +185,10 @@ def end_my_shift(
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
 ):
-    driver_service = DriverService()
+    driver_service = DriverService(db)
     return driver_service.end_shift(
-        db=db,
         driver_id=driver.driver_id,
-        shift_data=shift_data
+        shift_end=shift_data
     )
 
 @router.post("/me/break/start")
@@ -200,11 +197,10 @@ def start_break(
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
 ):
-    driver_service = DriverService()
+    driver_service = DriverService(db)
     driver_service.request_break(
-        db=db,
         driver_id=driver.driver_id,
-        break_data=break_data
+        break_request=break_data
     )
     return {"message": "Break started successfully", "break_type": break_data.break_type}
 
@@ -213,12 +209,9 @@ def end_break(
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
 ):
-    driver_service = DriverService()
-    driver_service.end_break(
-        db=db,
-        driver_id=driver.driver_id
-    )
-    return {"message": "Break ended successfully", "breaks_today": driver.breaks}
+    driver_service = DriverService(db)
+    updated_driver = driver_service.end_break(driver_id=driver.driver_id)
+    return {"message": "Break ended successfully", "breaks_today": updated_driver.breaks}
 
 @router.patch("/me/zone")
 def update_my_zone(
@@ -226,9 +219,9 @@ def update_my_zone(
     db: Session = Depends(get_db),
     driver = Depends(get_current_driver)
 ):
-    driver_service = DriverService()
-    driver_service.update_zone(db=db, driver_id=driver.driver_id, zone=zone_data.zone_id)
-    return {"detail": "Current zone updated successfully", "zone_id": driver.current_zone}
+    driver_service = DriverService(db)
+    updated_driver = driver_service.update_zone(driver_id=driver.driver_id, new_zone=zone_data.zone_id)
+    return {"detail": "Current zone updated successfully", "zone_id": updated_driver.current_zone}
 
 @router.get("/zone/{zone_id}")
 def get_drivers_in_zone(
@@ -236,12 +229,12 @@ def get_drivers_in_zone(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
-    driver_service = DriverService()
-    drivers = driver_service.get_drivers_by_zone(db=db, zone=zone_id)
+    driver_service = DriverService(db)
+    drivers = driver_service.get_drivers_by_zone(zone=zone_id)
     return {
         "zone_id": zone_id,
         "total_drivers": len(drivers),
-        "drivers": [DriverResponse.from_orm(driver) for driver in drivers]
+        "drivers": [DriverResponse.model_validate(driver) for driver in drivers]
     }
 
 @router.get("/{driver_id}", response_model=DriverResponse)
@@ -250,8 +243,8 @@ def get_driver_by_id(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
-    driver_service = DriverService()
-    driver = driver_service.get_driver_by_id(db=db, driver_id=driver_id)
+    driver_service = DriverService(db)
+    driver = driver_service.get_driver_by_id(driver_id=driver_id)
     if not driver:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -259,7 +252,7 @@ def get_driver_by_id(
         )
     driver.email = db.query(User).filter(User.user_id == driver.user_id).first().email
     driver.phone_number = db.query(User).filter(User.user_id == driver.user_id).first().phone_number
-    return DriverResponse.from_orm(driver)
+    return DriverResponse.model_validate(driver)
 
 @router.get("/{driver_id}/performance-stats", response_model=DriverPerformanceStats)
 def get_driver_performance_stats_by_id(
@@ -267,8 +260,8 @@ def get_driver_performance_stats_by_id(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
-    driver_service = DriverService()
-    stats = driver_service.get_performance_stats(db=db, driver_id=driver_id)
+    driver_service = DriverService(db)
+    stats = driver_service.get_performance_stats(driver_id=driver_id)
     return stats
 
 @router.delete("/{driver_id}")
@@ -277,6 +270,6 @@ def delete_driver(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
-    driver_service = DriverService()
-    driver_service.delete_driver(db=db, driver_id=driver_id)
+    driver_service = DriverService(db)
+    driver_service.delete_driver(driver_id=driver_id)
     return {"detail": f"Driver: {driver_id} deleted successfully"}

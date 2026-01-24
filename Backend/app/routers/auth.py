@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.core.dependencies import get_current_admin, get_current_user
 from app.services.auth_service import AuthService
-from app.schemas.auth import LoginRequest, AdminCreateUserRequest, LoginResponse, UserResponse
+from app.schemas.auth import LoginRequest, AdminCreateUserRequest, LoginResponse, UserResponse, FirebaseLoginRequest
 
 router = APIRouter()
 
@@ -14,10 +14,10 @@ def admin_create_user(
     admin = Depends(get_current_admin)
 ):
     auth_service = AuthService()
-    admin_id = admin.get("admin_id")
+    admin_id = admin.admin_id
     user = auth_service.create_user(data=data, db=db, admin_id=admin_id)
 
-    return UserResponse.from_orm(user)
+    return UserResponse.model_validate(user)
 
 @router.delete("/admin/delete-user/{user_id}")
 def admin_delete_user(
@@ -43,8 +43,8 @@ def logout():
     return {"message": "Logout successful"}
 
 @router.get("/me", response_model=UserResponse)
-def get_current_user(
+def get_me(
     current_user = Depends(get_current_user)
 ):
-    return UserResponse.from_orm(current_user)
+    return UserResponse.model_validate(current_user)
 

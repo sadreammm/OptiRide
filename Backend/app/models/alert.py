@@ -11,7 +11,7 @@ class Alert(Base):
 
     alert_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     driver_id = Column(String, ForeignKey('drivers.driver_id'), nullable=False)
-    alert_type = Column(String, nullable=False)
+    alert_type = Column(String, nullable=False)  # Store enum value as string
     severity = Column(Integer, nullable=False) # 1 (low) to 4 (Critical)
     location = Column(Geometry('POINT'))
     timestamp = Column(DateTime, default=datetime.utcnow)

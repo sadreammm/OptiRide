@@ -7,7 +7,7 @@ import uuid
 from app.models.user import User, Administrator
 from app.models.driver import Driver
 from app.core.security import (
-    verify_firebase_token,
+    verify_firebase_token_string,
     create_firebase_user,
     update_firebase_user,
     delete_firebase_user
@@ -16,7 +16,8 @@ from app.schemas.auth import (
     AdminCreateUserRequest,
     TokenResponse,
     UserResponse,
-    LoginResponse
+    LoginResponse,
+    UserRole
 )
 
 class AuthService:
@@ -31,7 +32,7 @@ class AuthService:
 
         try:
             user = User(
-                user_id=firebase_user.uid,
+                user_id=firebase_user,
                 email=data.email,
                 phone_number=data.phone_number,
                 name=data.name if data.name else "",
@@ -41,15 +42,14 @@ class AuthService:
             db.add(user)
             db.flush()
 
-            if data.role == "administrator":
+            if data.role == UserRole.ADMINISTRATOR:
                 profile = Administrator(
                     user_id=user.user_id,
                     admin_id=str(uuid.uuid4()),
-                    name=data.name if data.name else "",
                     role="administrator",
                     department=data.department if data.department else "",
                 )
-            elif data.role == "driver":
+            elif data.role == UserRole.DRIVER:
                 profile = Driver(
                     user_id=user.user_id,
                     name=data.name if data.name else ""
@@ -64,18 +64,26 @@ class AuthService:
             db.refresh(user)
             db.refresh(profile)
 
-            return UserResponse.from_orm(user)
+            return UserResponse.model_validate(user)
         except Exception as e:
             db.rollback()
-            delete_firebase_user(firebase_user.uid)
+            delete_firebase_user(firebase_user)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error creating user",
             )
     
     @staticmethod
-    def login_user(db: Session, token_data: dict) -> LoginResponse:
-        data = verify_firebase_token(token_data)
+    def login(db: Session, token_data: dict) -> LoginResponse:
+        # Extract the Firebase ID token from the request body
+        token = token_data.get("credentials")
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing credentials in request body",
+            )
+        
+        data = verify_firebase_token_string(token)
         user_id = data.get("uid")
 
         user = db.query(User).filter(User.user_id == user_id).first()
@@ -90,9 +98,9 @@ class AuthService:
         db.commit()
 
         return LoginResponse(
-            user=UserResponse.from_orm(user),
+            user=UserResponse.model_validate(user),
             token=TokenResponse(
-                token=token_data,
+                token=token,
                 token_type="bearer",
                 expires_in=3600,
                 user_id=user.user_id,
@@ -150,6 +158,6 @@ class AuthService:
         db.commit()
         db.refresh(user)
 
-        return UserResponse.from_orm(user)
+        return UserResponse.model_validate(user)
 
     

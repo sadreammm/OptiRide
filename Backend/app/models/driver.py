@@ -30,9 +30,11 @@ class Driver(Base):
 
     orders = relationship("Order", back_populates="driver")
     alerts = relationship("Alert", back_populates="driver")
-    assignments = relationship("Assignment", back_populates="driver_rel")
+    assignments = relationship("Assignment", back_populates="driver")
     sensor_records = relationship("SensorRecord", back_populates="driver")
     events = relationship("Event", back_populates="driver")
+    gps_tracks = relationship("GPSTrack", back_populates="driver")
     user = relationship("User", back_populates="driver")
-
+    break_records = relationship("Break", back_populates="driver")
+    gen_insights = relationship("GenInsights", back_populates="driver")
 

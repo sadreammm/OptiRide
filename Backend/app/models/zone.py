@@ -13,3 +13,4 @@ class Zone(Base):
     active_drivers = Column(Integer, default=0)
 
     demands = relationship("Demand", back_populates="zone")
+    drivers = relationship("Driver", backref="zone", foreign_keys="Driver.current_zone")

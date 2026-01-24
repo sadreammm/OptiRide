@@ -115,7 +115,6 @@ class ShiftSummary(BaseModel):
     end_time : Optional[datetime]
     total_hours : float
     total_orders : int
-    total_tips : float
     total_distance : float
     breaks_taken : int
     safety_alerts : int

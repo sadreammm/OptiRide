@@ -18,14 +18,13 @@ class User(Base):
     driver = relationship("Driver", back_populates="user", uselist=False)
 
 
-class Administrator(User):
+class Administrator(Base):
     __tablename__ = "administrators"
 
     user_id = Column(String, ForeignKey('users.user_id'), primary_key=True)
     admin_id = Column(String, unique=True, nullable=False)
-    name = Column(String, nullable=False)
     role = Column(String, nullable=False)
     department = Column(String) 
     access_level = Column(Integer, default=1)  # 1 to 5
 
-    user = relationship("User")
+    user = relationship("User", backref="administrator")

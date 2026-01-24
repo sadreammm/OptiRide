@@ -1,5 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Integer, Float, ForeignKey, ARRAY
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from geoalchemy2 import Geometry
 from app.db.database import Base
@@ -10,12 +9,13 @@ class Assignment(Base):
     __tablename__ = "assignments"
 
     assignment_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    driver = Column(String, ForeignKey('drivers.driver_id'), nullable=False)
-    orders = Column(ARRAY(String), nullable=False)
-    route = Column(ARRAY(Geometry('POINT')), nullable=False)
+    driver_id = Column(String, ForeignKey('drivers.driver_id'), nullable=False)
+    route = Column(Geometry('LINESTRING'), nullable=True)
     eta = Column(DateTime)
     status = Column(String, default="assigned")  # assigned, in_progress, completed, cancelled
     assigned_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
 
-    driver_rel = relationship("Driver", back_populates="assignments")
-    orders_rel = relationship("Order", primaryjoin="Assignment.orders.any(Order.order_id)", viewonly=True)
+    #orders_rel = relationship("Order", primaryjoin="Assignment.orders.any(Order.order_id)", viewonly=True)
+    driver = relationship("Driver", back_populates="assignments")
+    orders = relationship("Order", back_populates="assignment")  
