@@ -1,18 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import Optional, List
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import datetime
 from geoalchemy2.functions import ST_X, ST_Y
 from app.db.database import get_db
 from app.core.dependencies import get_current_driver, get_current_user, get_current_admin
 from app.core.socket_manager import socket_manager, emit_sync
 from app.services.driver_service import DriverService
 from app.models.driver import Driver
+from app.models.alert import Alert
 from app.models.user import User
 from app.schemas.driver import (
     DriverCreate, DriverUpdate, LocationSchema, StatusUpdate,
     DriverResponse, DriverPerformanceStats, NearbyDriverResponse,
     ShiftStart, ShiftEnd, ShiftSummary, BreakRequest, DriverStatus, DutyStatus,
-    DriverListResponse, ZoneUpdate, TelemetryUpdate
+    DriverListResponse, ZoneUpdate, TelemetryUpdate, DriverWithTodayStats
 )
 
 router = APIRouter()
@@ -57,9 +60,76 @@ def list_drivers(
     driver_service = DriverService(db)
     total = db.query(Driver).count()
     drivers = driver_service.list_drivers(skip=skip, limit=limit)
+    
+    # Calculate today's stats for each driver
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    drivers_with_stats = []
+    for driver in drivers:
+        # Get counts by type
+        today_harsh_braking = db.query(Alert).filter(
+            Alert.driver_id == driver.driver_id,
+            Alert.alert_type == 'harsh_braking',
+            Alert.timestamp >= today_start
+        ).count()
+        
+        today_speeding = db.query(Alert).filter(
+            Alert.driver_id == driver.driver_id,
+            Alert.alert_type.in_(['speeding', 'speed_violation']),
+            Alert.timestamp >= today_start
+        ).count()
+        
+        today_fatigue = db.query(Alert).filter(
+            Alert.driver_id == driver.driver_id,
+            Alert.alert_type.in_(['fatigue', 'fatigue_warning']),
+            Alert.timestamp >= today_start
+        ).count()
+        
+        today_critical = db.query(Alert).filter(
+            Alert.driver_id == driver.driver_id,
+            Alert.severity == 4,
+            Alert.timestamp >= today_start
+        ).count()
+        
+        today_total = db.query(Alert).filter(
+            Alert.driver_id == driver.driver_id,
+            Alert.timestamp >= today_start
+        ).count()
+        
+        # Calculate today's safety score
+        other_alerts = max(0, today_total - today_critical - today_fatigue - today_speeding - today_harsh_braking)
+        safety_score = 100.0
+        safety_score -= min(today_critical * 15, 45)
+        safety_score -= min(today_fatigue * 5, 25)
+        safety_score -= min(today_speeding * 3, 15)
+        safety_score -= min(today_harsh_braking * 2, 10)
+        safety_score -= min(other_alerts * 1, 5)
+        
+        # Factor in current fatigue level from driver record
+        current_fatigue = driver.fatigue_score or 0
+        if current_fatigue > 7:  # SEVERE fatigue
+            safety_score -= 15
+        elif current_fatigue > 4:  # WARNING fatigue
+            safety_score -= 8
+        elif current_fatigue > 2:  # Elevated fatigue
+            safety_score -= 3
+        
+        safety_score = max(0, safety_score)
+        
+        # Create driver with stats
+        driver_data = DriverResponse.model_validate(driver).model_dump()
+        driver_data.update({
+            'today_safety_score': round(safety_score, 1),
+            'today_safety_alerts': today_total,
+            'today_harsh_braking': today_harsh_braking,
+            'today_speeding': today_speeding,
+            'today_fatigue_alerts': today_fatigue,
+        })
+        drivers_with_stats.append(DriverWithTodayStats(**driver_data))
+    
     return DriverListResponse(
         total=total,
-        drivers=[DriverResponse.model_validate(driver) for driver in drivers]
+        drivers=drivers_with_stats
     )
 
 @router.get("/active-locations")

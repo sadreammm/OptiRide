@@ -64,6 +64,10 @@ function RootLayoutNav() {
         name="fall-assistance"
         options={{ headerShown: false, presentation: "modal" }}
       />
+      <Stack.Screen
+        name="take-break"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 }

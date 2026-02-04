@@ -6,6 +6,7 @@ import { Button } from '@/components/Button';
 import { theme } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrderNotification } from '@/contexts/OrderNotificationContext';
+import { useOrders } from '@/contexts/OrdersContext';
 import { acceptOrder, rejectOrder } from '@/services/orders';
 import { fetchDeliveryRoute } from '@/services/route';
 import * as Location from 'expo-location';
@@ -25,6 +26,7 @@ export default function OrderNotificationScreen() {
   const params = useLocalSearchParams();
   const { token } = useAuth();
   const { currentOffer, clearCurrentOffer, checkForOffers } = useOrderNotification();
+  const { refetchOrders } = useOrders();
 
   const [driverLocation, setDriverLocation] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -93,6 +95,8 @@ export default function OrderNotificationScreen() {
     setIsAccepting(true);
     try {
       await acceptOrder(token, order.order_id);
+      // Refresh orders list so the new order appears
+      await refetchOrders();
       clearCurrentOffer();
       // Navigate to fatigue detection with orderId
       router.replace({
@@ -112,12 +116,23 @@ export default function OrderNotificationScreen() {
     try {
       await rejectOrder(token, order.order_id);
       clearCurrentOffer();
-      router.back();
+      // Refresh orders and navigate to orders tab
+      await refetchOrders();
+      router.replace('/(tabs)/orders');
     } catch (error) {
       console.error('Failed to reject order:', error);
       setIsRejecting(false);
     }
   };
+
+  // Handle back navigation (swipe down) - order stays as offered/pending
+  useEffect(() => {
+    // If component unmounts without accepting/rejecting, order stays in offered status
+    return () => {
+      // Clear the local offer so it doesn't re-navigate, but don't reject the order
+      // Order will remain in offered status and show in pending tab
+    };
+  }, []);
 
   // If no order, show loading or redirect
   if (!order) {
@@ -315,16 +330,16 @@ export default function OrderNotificationScreen() {
           </View>
           <Text style={styles.title}>🍽️ {order.restaurant_name}</Text>
           <View style={styles.detailRow}>
-            <Text style={styles.label}>Pickup Address:</Text>
+            <Text style={styles.label}>Pickup:</Text>
             <Text style={styles.value} numberOfLines={2}>{order.pickup_address}</Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Text style={styles.label}>Dropoff:</Text>
+            <Text style={styles.value} numberOfLines={2}>{order.dropoff_address}</Text>
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.label}>Customer:</Text>
             <Text style={styles.value}>{order.customer_name}</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.label}>Pickup Time:</Text>
-            <Text style={styles.value}>{formatTime(order.estimated_pickup_time)}</Text>
           </View>
           <View style={styles.infoRow}>
             <View style={styles.infoItem}>

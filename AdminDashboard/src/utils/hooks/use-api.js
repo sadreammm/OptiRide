@@ -449,6 +449,127 @@ export const useGenerateReport = () => {
     return { data, loading, error, generateReport };
 };
 
+// ============================================
+// NEW AGGREGATED ANALYTICS HOOKS
+// ============================================
+
+/**
+ * Hook for fetching aggregated alerts summary
+ * @param {string} period - 'today', 'last_7_days', 'this_month'
+ */
+export const useAlertsSummary = (period = 'last_7_days') => {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const fetchAlertsSummary = useCallback(async () => {
+        try {
+            setLoading(true);
+            const result = await analyticsService.getAlertsSummary(period);
+            setData(result);
+            setError(null);
+        } catch (err) {
+            setError(err);
+        } finally {
+            setLoading(false);
+        }
+    }, [period]);
+
+    useEffect(() => {
+        fetchAlertsSummary();
+    }, [fetchAlertsSummary]);
+
+    return { data, loading, error, refetch: fetchAlertsSummary };
+};
+
+/**
+ * Hook for fetching fleet-wide safety score
+ * @param {string} period - 'today', 'last_7_days', 'this_month'
+ */
+export const useSafetyScore = (period = 'last_7_days') => {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const fetchSafetyScore = useCallback(async () => {
+        try {
+            setLoading(true);
+            const result = await analyticsService.getSafetyScore(period);
+            setData(result);
+            setError(null);
+        } catch (err) {
+            setError(err);
+        } finally {
+            setLoading(false);
+        }
+    }, [period]);
+
+    useEffect(() => {
+        fetchSafetyScore();
+    }, [fetchSafetyScore]);
+
+    return { data, loading, error, refetch: fetchSafetyScore };
+};
+
+/**
+ * Hook for fetching top performing drivers
+ * @param {string} period - 'today', 'last_7_days', 'this_month'
+ * @param {number} limit - Number of top performers (1-20)
+ */
+export const useTopPerformers = (period = 'last_7_days', limit = 5) => {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const fetchTopPerformers = useCallback(async () => {
+        try {
+            setLoading(true);
+            const result = await analyticsService.getTopPerformers(period, limit);
+            setData(result);
+            setError(null);
+        } catch (err) {
+            setError(err);
+        } finally {
+            setLoading(false);
+        }
+    }, [period, limit]);
+
+    useEffect(() => {
+        fetchTopPerformers();
+    }, [fetchTopPerformers]);
+
+    return { data, loading, error, refetch: fetchTopPerformers };
+};
+
+/**
+ * Hook for fetching demand forecast
+ * @param {number} hours - Number of hours to forecast (1-24)
+ */
+export const useDemandForecast = (hours = 12) => {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const fetchDemandForecast = useCallback(async () => {
+        try {
+            setLoading(true);
+            const result = await analyticsService.getDemandForecast(hours);
+            setData(result);
+            setError(null);
+        } catch (err) {
+            setError(err);
+        } finally {
+            setLoading(false);
+        }
+    }, [hours]);
+
+    useEffect(() => {
+        fetchDemandForecast();
+    }, [fetchDemandForecast]);
+
+    return { data, loading, error, refetch: fetchDemandForecast };
+};
+
 // Custom hook for periodic data refresh
 export const usePolling = (callback, interval = 5000) => {
     useEffect(() => {

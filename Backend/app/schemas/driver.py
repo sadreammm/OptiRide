@@ -84,6 +84,7 @@ class DriverResponse(BaseModel):
     shift_end_time: Optional[str] = "17:00"
     
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     @computed_field
     def safety_score(self) -> float:
@@ -107,22 +108,50 @@ class DriverResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class DriverWithTodayStats(DriverResponse):
+    """Driver response with today's safety stats for table view"""
+    today_safety_score: float = 100.0
+    today_safety_alerts: int = 0
+    today_harsh_braking: int = 0
+    today_speeding: int = 0
+    today_fatigue_alerts: int = 0
+
 class DriverListResponse(BaseModel):
-    drivers: list[DriverResponse]
+    drivers: list[DriverWithTodayStats]
     total: int
 
 class DriverPerformanceStats(BaseModel):
     driver_id : str
     name : str
 
+    # Today's stats (primary - for real-time monitoring)
     today_orders : int
+    today_earnings : float  # Today's earnings from deliveries
     today_breaks : int
     today_distance : float 
     today_safety_alerts : int 
-    average_fatigue_score : float
+    today_safety_score : float  # Today's safety score (0-100)
+    today_harsh_braking : int
+    today_speeding : int
+    today_fatigue_alerts : int
+    current_fatigue_score : float  # Current/real-time fatigue level
+    
+    # Lifetime/overall stats
     total_orders : int
+    total_breaks : int = 0  # Lifetime breaks taken
+    total_distance : float = 0.0  # Lifetime distance in km
     average_rating : float
     completion_rate : float
+    
+    # 30-day totals and averages (secondary - for trends)
+    orders_30d : int = 0  # Total orders in last 30 days
+    breaks_30d : int = 0  # Total breaks in last 30 days
+    distance_30d : float = 0.0  # Total distance in last 30 days
+    avg_30d_safety_score : float  # 30-day average safety score
+    total_30d_alerts : int
+    avg_30d_harsh_braking : float  # Average per day
+    avg_30d_speeding : float  # Average per day
+    avg_30d_fatigue_alerts : float  # Average per day
     
 
 class NearbyDriverResponse(BaseModel):
@@ -136,13 +165,11 @@ class NearbyDriverResponse(BaseModel):
     current_zone : Optional[str] = None
 
 class ShiftStart(BaseModel):
-    driver_id : str
     start_time : datetime
     start_latitude : float = Field(..., ge=-90, le=90)
     start_longitude : float = Field(..., ge=-180, le=180)
 
 class ShiftEnd(BaseModel):
-    driver_id : str
     end_time : datetime
     end_latitude : float = Field(..., ge=-90, le=90)
     end_longitude : float = Field(..., ge=-180, le=180)

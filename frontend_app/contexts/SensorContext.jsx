@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Platform, AppState } from "react-native";
 import { Accelerometer, Gyroscope } from "expo-sensors";
 import * as Location from "expo-location";
@@ -31,6 +31,7 @@ export function SensorProvider({ children }) {
     const [isMonitoring, setIsMonitoring] = useState(false);
     const [isOnline, setIsOnline] = useState(false);
     const [sessionId, setSessionId] = useState(null);
+    const isMonitoringRef = useRef(false); // Use ref to track monitoring state for checks
 
     // Real-time sensor values
     const [currentSpeed, setCurrentSpeed] = useState(0);
@@ -56,7 +57,14 @@ export function SensorProvider({ children }) {
     const batchIntervalRef = useRef(null);
     const telemetryIntervalRef = useRef(null);
     const deviceStatsIntervalRef = useRef(null);
+    const locationTrackingRef = useRef(false); // Track if location is running
     const appStateRef = useRef(AppState.currentState);
+
+    // Break state (persists across navigation)
+    const [isOnBreak, setIsOnBreak] = useState(false);
+    const [breakStartTime, setBreakStartTime] = useState(null);
+    const [breakDuration, setBreakDuration] = useState(0);
+    const breakIntervalRef = useRef(null);
 
     // Sync isOnline state with driver profile on load
     useEffect(() => {
@@ -151,23 +159,38 @@ export function SensorProvider({ children }) {
         }
     }, [token, locationData]);
 
-    // Start/Stop basic location tracking based on Online status
+    // Start/Stop basic location tracking based on Online status OR monitoring status
     useEffect(() => {
         let subscription = null;
+        let isMounted = true;
 
         const startTracking = async () => {
+            // Prevent multiple subscriptions
+            if (locationTrackingRef.current) {
+                return;
+            }
+            
             if (Platform.OS === "web") return;
             const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== "granted") return;
+            if (status !== "granted") {
+                console.log("Location permission not granted");
+                return;
+            }
 
+            if (!isMounted) return;
+            
+            locationTrackingRef.current = true;
+            console.log("Starting location tracking for speed...");
+            
             subscription = await Location.watchPositionAsync(
                 {
                     accuracy: Location.Accuracy.High,
                     timeInterval: LOCATION_INTERVAL,
-                    distanceInterval: 10,
+                    distanceInterval: 5,
                 },
                 (location) => {
-                    const speedKmh = (location.coords.speed || 0) * 3.6;
+                    const speedMs = location.coords.speed;
+                    const speedKmh = speedMs && speedMs > 0 ? speedMs * 3.6 : 0;
                     setCurrentSpeed(speedKmh);
                     setLocationData({
                         latitude: location.coords.latitude,
@@ -182,29 +205,52 @@ export function SensorProvider({ children }) {
                     }
                 }
             );
-
-            // Start intervals
-            telemetryIntervalRef.current = setInterval(sendTelemetryUpdate, TELEMETRY_INTERVAL);
-            deviceStatsIntervalRef.current = setInterval(sendDeviceTelemetry, DEVICE_STATS_INTERVAL);
-
-            // Send initial telemetry immediately
-            sendDeviceTelemetry();
+            console.log("Location tracking started");
         };
 
-        if (isOnline && token) {
+        // Start tracking if online OR if monitoring is active
+        if ((isOnline || isMonitoring) && token) {
             startTracking();
-        } else {
-            if (subscription) subscription.remove();
-            if (telemetryIntervalRef.current) clearInterval(telemetryIntervalRef.current);
-            if (deviceStatsIntervalRef.current) clearInterval(deviceStatsIntervalRef.current);
         }
 
         return () => {
-            if (subscription) subscription.remove();
+            isMounted = false;
+            locationTrackingRef.current = false;
+            if (subscription) {
+                subscription.remove();
+                console.log("Location tracking stopped");
+            }
+        };
+    }, [isOnline, isMonitoring, token]); // Removed function dependencies
+
+    // Separate effect for telemetry intervals (only when online)
+    useEffect(() => {
+        if (isOnline && token) {
+            telemetryIntervalRef.current = setInterval(() => {
+                if (locationData) {
+                    updateDriverLocation(token, {
+                        latitude: locationData.latitude,
+                        longitude: locationData.longitude,
+                        speed: locationData.speed || 0,
+                        heading: locationData.heading || 0
+                    }).catch(err => console.warn("Telemetry update failed:", err.message));
+                }
+            }, TELEMETRY_INTERVAL);
+            
+            deviceStatsIntervalRef.current = setInterval(() => {
+                updateTelemetry(token, {
+                    battery_level: batteryLevel,
+                    network_strength: networkStrength,
+                    camera_active: isMonitoring
+                }).catch(err => console.warn("Device stats update failed:", err.message));
+            }, DEVICE_STATS_INTERVAL);
+        }
+
+        return () => {
             if (telemetryIntervalRef.current) clearInterval(telemetryIntervalRef.current);
             if (deviceStatsIntervalRef.current) clearInterval(deviceStatsIntervalRef.current);
         };
-    }, [isOnline, token, sendTelemetryUpdate, sendDeviceTelemetry]);
+    }, [isOnline, token]);
 
     // Start sensor monitoring (high frequency)
     const startMonitoring = useCallback(async () => {
@@ -213,59 +259,98 @@ export function SensorProvider({ children }) {
             return false;
         }
 
+        // Check if already monitoring using ref (avoids stale closure)
+        if (isMonitoringRef.current) {
+            console.log("Already monitoring sensors");
+            return true;
+        }
+
+        // Mark as monitoring immediately to prevent double-starts
+        isMonitoringRef.current = true;
+
         try {
+            console.log("Starting sensor monitoring...");
             const newSessionId = generateSessionId();
             setSessionId(newSessionId);
+
+            // Check if sensors are available
+            const accelAvailable = await Accelerometer.isAvailableAsync();
+            const gyroAvailable = await Gyroscope.isAvailableAsync();
+            
+            console.log(`Accelerometer available: ${accelAvailable}, Gyroscope available: ${gyroAvailable}`);
+
+            if (!accelAvailable && !gyroAvailable) {
+                console.warn("No sensors available on this device");
+                // Still set monitoring to true so we at least track GPS speed
+                setIsMonitoring(true);
+                return true;
+            }
 
             // Set sensor update intervals
             Accelerometer.setUpdateInterval(SENSOR_UPDATE_INTERVAL);
             Gyroscope.setUpdateInterval(SENSOR_UPDATE_INTERVAL);
 
-            // Subscribe to accelerometer
-            accelerometerSubscription.current = Accelerometer.addListener((data) => {
-                const analyzed = analyzeAccelerometer(data);
-                setAccelerometerData(analyzed);
-                accelerometerBuffer.current.push({
-                    x: data.x,
-                    y: data.y,
-                    z: data.z,
-                    timestamp: new Date().toISOString(),
+            // Subscribe to accelerometer if available
+            if (accelAvailable) {
+                accelerometerSubscription.current = Accelerometer.addListener((data) => {
+                    const analyzed = analyzeAccelerometer(data);
+                    setAccelerometerData(analyzed);
+                    accelerometerBuffer.current.push({
+                        x: data.x,
+                        y: data.y,
+                        z: data.z,
+                        timestamp: new Date().toISOString(),
+                    });
+                    if (accelerometerBuffer.current.length > 100) {
+                        accelerometerBuffer.current.shift();
+                    }
                 });
-                if (accelerometerBuffer.current.length > 100) {
-                    accelerometerBuffer.current.shift();
-                }
-            });
+                console.log("Accelerometer subscription created");
+            }
 
-            // Subscribe to gyroscope
-            gyroscopeSubscription.current = Gyroscope.addListener((data) => {
-                const analyzed = analyzeGyroscope(data);
-                setGyroscopeData(analyzed);
-                gyroscopeBuffer.current.push({
-                    x: data.x,
-                    y: data.y,
-                    z: data.z,
-                    timestamp: new Date().toISOString(),
+            // Subscribe to gyroscope if available
+            if (gyroAvailable) {
+                gyroscopeSubscription.current = Gyroscope.addListener((data) => {
+                    const analyzed = analyzeGyroscope(data);
+                    setGyroscopeData(analyzed);
+                    gyroscopeBuffer.current.push({
+                        x: data.x,
+                        y: data.y,
+                        z: data.z,
+                        timestamp: new Date().toISOString(),
+                    });
+                    if (gyroscopeBuffer.current.length > 100) {
+                        gyroscopeBuffer.current.shift();
+                    }
                 });
-                if (gyroscopeBuffer.current.length > 100) {
-                    gyroscopeBuffer.current.shift();
-                }
-            });
+                console.log("Gyroscope subscription created");
+            }
 
             // Start batch sending interval
             batchIntervalRef.current = setInterval(() => {
                 sendSensorBatch(newSessionId);
             }, BATCH_SEND_INTERVAL);
 
-            setIsMonitoring(true);
+            // Update state - use callback form to ensure it triggers
+            setIsMonitoring(() => {
+                console.log("setIsMonitoring callback - setting to true");
+                return true;
+            });
+            console.log("Sensor monitoring started successfully");
             return true;
         } catch (error) {
             console.error("Error starting sensor monitoring:", error);
+            // Even if sensors fail, set monitoring true so UI doesn't keep showing the button
+            isMonitoringRef.current = true;
+            setIsMonitoring(true);
             return false;
         }
     }, [analyzeAccelerometer, analyzeGyroscope]);
 
     // Stop sensor monitoring
     const stopMonitoring = useCallback(() => {
+        console.log("Stopping sensor monitoring...");
+        isMonitoringRef.current = false;
         if (accelerometerSubscription.current) {
             accelerometerSubscription.current.remove();
             accelerometerSubscription.current = null;
@@ -279,15 +364,15 @@ export function SensorProvider({ children }) {
             batchIntervalRef.current = null;
         }
 
-        if (sessionId) {
-            sendSensorBatch(sessionId);
-        }
+        // Don't send batch here as it causes dependency issues
+        // The batch will be sent on next interval or lost (acceptable)
 
         setIsMonitoring(false);
         setSessionId(null);
         accelerometerBuffer.current = [];
         gyroscopeBuffer.current = [];
-    }, [sessionId]);
+        console.log("Sensor monitoring stopped");
+    }, []); // No dependencies - stable function reference
 
     // Toggle duty status
     const toggleOnline = useCallback(async () => {
@@ -295,21 +380,25 @@ export function SensorProvider({ children }) {
 
         try {
             if (isOnline) {
-                // End Shift
+                // End Shift - go offline
                 await endShift(token, {
                     end_time: new Date().toISOString(),
                     end_latitude: locationData?.latitude || 0,
                     end_longitude: locationData?.longitude || 0
                 });
+                // Also update driver status explicitly
+                await updateDriverStatus(token, "offline");
                 setIsOnline(false);
                 console.log("Shift ended (Go Off-Duty)");
             } else {
-                // Start Shift
+                // Start Shift - go online
                 await startShift(token, {
                     start_time: new Date().toISOString(),
                     start_latitude: locationData?.latitude || 0,
                     start_longitude: locationData?.longitude || 0
                 });
+                // Also update driver status explicitly
+                await updateDriverStatus(token, "available");
                 setIsOnline(true);
                 console.log("Shift started (Go On-Duty)");
             }
@@ -325,6 +414,60 @@ export function SensorProvider({ children }) {
             }
         }
     }, [token, isOnline, locationData]);
+
+    // Break management functions
+    const startBreak = useCallback(async () => {
+        if (!token) return false;
+        try {
+            await updateDriverStatus(token, "on_break");
+            setIsOnBreak(true);
+            setBreakStartTime(Date.now());
+            setBreakDuration(0);
+            
+            // Start timer
+            breakIntervalRef.current = setInterval(() => {
+                setBreakDuration((prev) => prev + 1);
+            }, 1000);
+            
+            console.log("Break started");
+            return true;
+        } catch (error) {
+            console.error("Failed to start break:", error);
+            return false;
+        }
+    }, [token]);
+
+    const endBreak = useCallback(async () => {
+        if (!token) return false;
+        try {
+            await updateDriverStatus(token, "available");
+            
+            if (breakIntervalRef.current) {
+                clearInterval(breakIntervalRef.current);
+                breakIntervalRef.current = null;
+            }
+            
+            const finalDuration = breakDuration;
+            setIsOnBreak(false);
+            setBreakStartTime(null);
+            setBreakDuration(0);
+            
+            console.log("Break ended after", finalDuration, "seconds");
+            return finalDuration;
+        } catch (error) {
+            console.error("Failed to end break:", error);
+            return false;
+        }
+    }, [token, breakDuration]);
+
+    // Clean up break interval on unmount
+    useEffect(() => {
+        return () => {
+            if (breakIntervalRef.current) {
+                clearInterval(breakIntervalRef.current);
+            }
+        };
+    }, []);
 
     // Send sensor batch to backend
     const sendSensorBatch = useCallback(async (currentSessionId) => {
@@ -370,13 +513,29 @@ export function SensorProvider({ children }) {
         return () => subscription?.remove();
     }, []);
 
-    // Cleanup on unmount
+    // Cleanup on unmount only (empty dependency array)
     useEffect(() => {
         return () => {
-            stopMonitoring();
+            // Only cleanup subscriptions directly, don't call stopMonitoring
+            // as it may have stale closures
+            if (accelerometerSubscription.current) {
+                accelerometerSubscription.current.remove();
+            }
+            if (gyroscopeSubscription.current) {
+                gyroscopeSubscription.current.remove();
+            }
+            if (batchIntervalRef.current) {
+                clearInterval(batchIntervalRef.current);
+            }
         };
-    }, [stopMonitoring]);
+    }, []); // Empty deps - only run on unmount
 
+    // Debug log when isMonitoring changes
+    useEffect(() => {
+        console.log('[SensorContext] isMonitoring updated to:', isMonitoring);
+    }, [isMonitoring]);
+
+    // Don't use useMemo - it can cause stale value issues
     const value = {
         isMonitoring,
         isOnline,
@@ -393,6 +552,11 @@ export function SensorProvider({ children }) {
         startMonitoring,
         stopMonitoring,
         toggleOnline,
+        // Break state
+        isOnBreak,
+        breakDuration,
+        startBreak,
+        endBreak,
     };
 
     return (

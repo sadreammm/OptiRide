@@ -1,5 +1,19 @@
 import { ApiOrder, ApiOrderStatus } from "./backend";
 
+// Driver earnings calculation constants
+const DRIVER_BASE_FEE = 5.0; // Base fee in AED
+const DRIVER_PER_KM_RATE = 3.0; // Per kilometer rate in AED
+
+export function calculateDriverEarnings(order) {
+  // If delivery_fee is set, use it; otherwise calculate from distance
+  if (order.delivery_fee) {
+    return order.delivery_fee;
+  }
+  
+  const distance = order.estimated_distance_km || order.actual_distance_km || 0;
+  return DRIVER_BASE_FEE + (distance * DRIVER_PER_KM_RATE);
+}
+
 export function mapApiStatusToUi(status) {
   switch (status) {
     case "pending":
@@ -21,6 +35,7 @@ export function mapApiStatusToUi(status) {
 
 export function mapApiOrderToOrder(order) {
   const mapping = mapApiStatusToUi(order.status);
+  const driverEarnings = calculateDriverEarnings(order);
   return {
     id: order.order_id,
     orderNumber: `#${order.order_id.slice(0, 6).toUpperCase()}`,
@@ -36,7 +51,9 @@ export function mapApiOrderToOrder(order) {
       customerName: order.customer_name,
       customerPhone: order.customer_contact,
       items: [],
-      totalAmount: order.price ? `AED ${order.price.toFixed(2)}` : undefined,
+      totalAmount: `AED ${driverEarnings.toFixed(2)}`,
+      orderPrice: order.price ? `AED ${order.price.toFixed(2)}` : undefined,
+      driverEarnings: driverEarnings,
       deliveryTime: order.delivered_at ?? undefined,
     },
     pickupLatitude: order.pickup_latitude,

@@ -1,4 +1,4 @@
-import { Users, AlertTriangle, Package, UserX, CheckCircle, Clock, TrendingUp, Activity } from "lucide-react";
+import { Users, AlertTriangle, Package, UserX, CheckCircle, Clock, TrendingUp, TrendingDown, Activity, DollarSign } from "lucide-react";
 import { MetricCard } from "@/components/shared/MetricCard";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,6 +62,8 @@ export function FleetDashboard() {
   const ordersChangePct = dashboardOverview?.orders_change_percent || 0;
   const revenueChangePct = dashboardOverview?.revenue_change_percent || 0;
   const driversChangePct = dashboardOverview?.drivers_change_percent || 0;
+  const completionRateChangePct = dashboardOverview?.completion_rate_change_percent || 0;
+  const deliveryTimeChangePct = dashboardOverview?.delivery_time_change_percent || 0;
 
   // Map driver status for the distribution card
   const driverStatusData = [
@@ -74,11 +76,17 @@ export function FleetDashboard() {
     percentage: totalDrivers > 0 ? ((item.value / totalDrivers) * 100).toFixed(1) : 0
   }));
 
-  // Helper function to format trend
-  const getTrend = (val) => ({
-    value: `${Math.abs(val || 0).toFixed(1)}%`,
-    isPositive: (val || 0) >= 0
-  });
+  // Helper function to format trend - cap extreme values for display
+  const getTrend = (val) => {
+    // Cap at ±200% for display purposes
+    const cappedVal = Math.max(-200, Math.min(200, val || 0));
+    const isPositive = cappedVal >= 0;
+    const sign = isPositive ? "+" : "-";
+    return {
+      value: `${sign}${Math.abs(cappedVal).toFixed(1)}%`,
+      isPositive: isPositive
+    };
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -140,15 +148,15 @@ export function FleetDashboard() {
           subtitle={`${orderCompletionRate.toFixed(1)}% completion rate`}
           icon={CheckCircle}
           trend={getTrend(ordersChangePct)}
-          iconColor="text-success"
+          iconColor={ordersChangePct >= 0 ? "text-success" : "text-destructive"}
         />
         <MetricCard
           title="Total Revenue"
-          value={`$${totalRevenue.toLocaleString()}`}
+          value={`AED ${totalRevenue.toLocaleString()}`}
           subtitle="Today's earnings"
-          icon={TrendingUp}
+          icon={revenueChangePct >= 0 ? TrendingUp : TrendingDown}
           trend={getTrend(revenueChangePct)}
-          iconColor="text-success"
+          iconColor={revenueChangePct >= 0 ? "text-success" : "text-destructive"}
         />
         <MetricCard
           title="Avg Delivery Time"

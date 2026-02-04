@@ -5,7 +5,7 @@ from app.db.database import engine, Base
 from app.routers import auth, driver, safety, order, analytics
 from app.core.socket_manager import sio_app
 from app.models import alert, analytics as analytics_model, assignment, break_model, \
-    driver as driver_model, event, gps_track, order as order_model, sensor_record, user, zone
+    driver as driver_model, event, gps_track, order as order_model, weather, sensor_record, user, zone
 
 Base.metadata.create_all(bind=engine)
 
@@ -37,4 +37,5 @@ async def root():
 app.mount("/ws", sio_app)
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Use 0.0.0.0 to accept connections from external devices (mobile app testing)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

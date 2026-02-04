@@ -131,6 +131,35 @@ class OrderService:
 
         return order
     
+    def offer_to_driver(self, order_id: str, driver_id: str) -> Order:
+        """Offer an order to a specific driver (sets status to offered)"""
+        order = self.get_order(order_id)
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        
+        # Verify driver exists
+        from app.models.driver import Driver
+        driver = self.db.query(Driver).filter(Driver.driver_id == driver_id).first()
+        if not driver:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver not found")
+        
+        order.driver_id = driver_id
+        order.status = OrderStatus.offered.value
+        
+        # Calculate estimated times
+        avg_speed_kmh = 40.0
+        # Estimate 15 min to pickup, 25 min for delivery by default
+        pickup_time = datetime.utcnow() + timedelta(minutes=15)
+        delivery_time = pickup_time + timedelta(minutes=order.duration_min or 25)
+        
+        order.pickup_time = pickup_time
+        order.dropoff_time = delivery_time
+        
+        self.db.commit()
+        self.db.refresh(order)
+        
+        return order
+    
     def auto_assign_order(self, order_id: str) -> Order:
         order = self.get_order(order_id)
         if not order:
@@ -321,6 +350,32 @@ class OrderService:
             Order.driver_id == driver_id,
             Order.status.in_([OrderStatus.assigned.value, OrderStatus.picked_up.value])
         ).all()
+    
+    def get_all_orders_for_driver(
+        self, 
+        driver_id: str, 
+        include_completed: bool = True,
+        days: int = 7
+    ) -> List[Order]:
+        """Get all orders for a driver including offered, completed/cancelled within the specified days"""
+        from datetime import timedelta
+        
+        query = self.db.query(Order).filter(Order.driver_id == driver_id)
+        
+        if include_completed:
+            # Include all statuses including offered (for pending tab)
+            cutoff = datetime.now() - timedelta(days=days)
+            query = query.filter(
+                (Order.status.in_([OrderStatus.offered.value, OrderStatus.assigned.value, OrderStatus.picked_up.value])) |
+                ((Order.status.in_([OrderStatus.delivered.value, OrderStatus.cancelled.value])) & 
+                 (Order.created_at >= cutoff))
+            )
+        else:
+            query = query.filter(
+                Order.status.in_([OrderStatus.offered.value, OrderStatus.assigned.value, OrderStatus.picked_up.value])
+            )
+        
+        return query.order_by(Order.created_at.desc()).all()
     
     def get_order_stats(
         self,

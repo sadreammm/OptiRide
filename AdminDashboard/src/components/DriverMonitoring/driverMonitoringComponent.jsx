@@ -126,7 +126,7 @@ export function DriverMonitoring() {
               <TableHead>Fatigue Level</TableHead>
               <TableHead>Speed</TableHead>
               <TableHead>Last Activity</TableHead>
-              <TableHead>Safety Score</TableHead>
+              <TableHead>Today's Score</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -134,8 +134,8 @@ export function DriverMonitoring() {
             {filteredDrivers.map((driver) => (<TableRow key={driver.driver_id}>
               <TableCell>
                 <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${driver.fatigue === 'SEVERE' ? 'bg-destructive/20 text-destructive' :
-                    driver.fatigue === 'WARNING' ? 'bg-warning/20 text-warning' :
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${driver.fatigue_score > 7 ? 'bg-destructive/20 text-destructive' :
+                    driver.fatigue_score > 4 ? 'bg-warning/20 text-warning' :
                       'bg-primary/20 text-primary'}`}>
                     {driver.name.split(' ').map(n => n[0]).join('')}
                   </div>
@@ -162,16 +162,16 @@ export function DriverMonitoring() {
                 </Badge>
               </TableCell>
               <TableCell className="text-muted-foreground">
-                {driver.current_speed ? `${driver.current_speed.toFixed(1)} km/h` : '0 km/h'}
+                {driver.current_speed ? `${Math.ceil(driver.current_speed)} km/h` : '0 km/h'}
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {formatLastActive(driver.updated_at)}
               </TableCell>
               <TableCell>
-                <span className={`font-medium ${(driver.safety_score || 100) >= 80 ? 'text-success' :
-                    (driver.safety_score || 100) >= 50 ? 'text-warning' : 'text-destructive'
+                <span className={`font-medium ${(driver.today_safety_score ?? 100) >= 80 ? 'text-success' :
+                    (driver.today_safety_score ?? 100) >= 50 ? 'text-warning' : 'text-destructive'
                   }`}>
-                  {driver.safety_score || 100}/100
+                  {(driver.today_safety_score ?? 100).toFixed(0)}/100
                 </span>
               </TableCell>
               <TableCell>
@@ -227,9 +227,12 @@ export function DriverMonitoring() {
               </div>
             </div>
             <div className="text-right">
-              <div className="text-foreground">Safety Score</div>
-              <div className="text-3xl text-green-600">
-                {driverStats?.average_rating ? (driverStats.average_rating * 20).toFixed(0) : "95"}
+              <div className="text-foreground">Today's Safety Score</div>
+              <div className={`text-3xl font-bold ${
+                (driverStats?.today_safety_score ?? 100) >= 80 ? 'text-success' :
+                (driverStats?.today_safety_score ?? 100) >= 50 ? 'text-warning' : 'text-destructive'
+              }`}>
+                {driverStats?.today_safety_score?.toFixed(0) ?? "100"}/100
               </div>
             </div>
           </div>
@@ -242,9 +245,9 @@ export function DriverMonitoring() {
             </h4>
             <div className="h-48 bg-muted rounded-lg flex items-center justify-center">
               <div className="text-center">
-                <MapPin className="w-12 h-12 text-blue-600 mx-auto mb-2" />
+                <MapPin className="w-12 h-12 text-primary mx-auto mb-2" />
                 <p className="text-muted-foreground">Current Location: {selectedDriver.current_zone || "N/A"}</p>
-                <p className="text-muted-foreground">Speed: 0 km/h {/* Hardcoded: Speed Data */}</p>
+                <p className="text-muted-foreground">Speed: {selectedDriver.current_speed || "0"} km/h {/* Hardcoded: Speed Data */}</p>
               </div>
             </div>
           </Card>
@@ -253,28 +256,28 @@ export function DriverMonitoring() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="p-4">
               <div className="flex items-center gap-2 mb-2">
-                <Package className="w-4 h-4 text-blue-600" />
+                <Package className="w-4 h-4 text-primary" />
                 <span className="text-muted-foreground">Orders Today</span>
               </div>
               <p className="text-foreground text-2xl">{driverStats?.today_orders ?? 0}</p>
             </Card>
             <Card className="p-4">
               <div className="flex items-center gap-2 mb-2">
-                <TrendingUp className="w-4 h-4 text-green-600" />
+                <TrendingUp className="w-4 h-4 text-success" />
                 <span className="text-muted-foreground">Acceptance Rate</span>
               </div>
               <p className="text-foreground text-2xl">{driverStats?.completion_rate ?? 0}%</p>
             </Card>
             <Card className="p-4">
               <div className="flex items-center gap-2 mb-2">
-                <Clock className="w-4 h-4 text-orange-600" />
+                <Clock className="w-4 h-4 text-warning" />
                 <span className="text-muted-foreground">Breaks Taken</span>
               </div>
               <p className="text-foreground text-2xl">{driverStats?.today_breaks ?? 0}</p>
             </Card>
             <Card className="p-4">
               <div className="flex items-center gap-2 mb-2">
-                <Navigation className="w-4 h-4 text-purple-600" />
+                <Navigation className="w-4 h-4 text-primary" />
                 <span className="text-muted-foreground">Distance</span>
               </div>
               <p className="text-foreground text-2xl">{driverStats?.today_distance ?? 0} km</p>
@@ -286,8 +289,8 @@ export function DriverMonitoring() {
             <h4 className="text-foreground mb-4">Device Status</h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="flex items-center gap-3">
-                <Battery className={`w-5 h-5 ${(selectedDriver.battery_level ?? 100) > 50 ? "text-green-600" :
-                    (selectedDriver.battery_level ?? 100) > 20 ? "text-yellow-600" : "text-red-600"
+                <Battery className={`w-5 h-5 ${(selectedDriver.battery_level ?? 100) > 50 ? "text-success" :
+                    (selectedDriver.battery_level ?? 100) > 20 ? "text-warning" : "text-destructive"
                   }`} />
                 <div>
                   <p className="text-muted-foreground">Battery</p>
@@ -295,8 +298,8 @@ export function DriverMonitoring() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <Wifi className={`w-5 h-5 ${selectedDriver.network_strength === 'Strong' ? "text-green-600" :
-                    selectedDriver.network_strength === 'Weak' ? "text-yellow-600" : "text-gray-400"
+                <Wifi className={`w-5 h-5 ${selectedDriver.network_strength === 'Strong' ? "text-success" :
+                    selectedDriver.network_strength === 'Weak' ? "text-warning" : "text-muted-foreground"
                   }`} />
                 <div>
                   <p className="text-muted-foreground">Network</p>
@@ -304,7 +307,7 @@ export function DriverMonitoring() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <Camera className={`w-5 h-5 ${selectedDriver.camera_active ? "text-green-600" : "text-red-600"}`} />
+                <Camera className={`w-5 h-5 ${selectedDriver.camera_active ? "text-success" : "text-destructive"}`} />
                 <div>
                   <p className="text-muted-foreground">Camera</p>
                   <p className="text-foreground">{selectedDriver.camera_active ? "Active" : "Inactive"}</p>
@@ -314,49 +317,110 @@ export function DriverMonitoring() {
           </Card>
 
           {/* AI Recommendations */}
-          <Card className="p-4 bg-blue-500/10 border-blue-500/20">
+          <Card className="p-4 bg-primary/10 border-primary/20">
             <h4 className="text-foreground mb-3 flex items-center gap-2">
-              <Activity className="w-4 h-4 text-blue-600" />
+              <Activity className="w-4 h-4 text-primary" />
               AI-Generated Recommendations
             </h4>
             <div className="space-y-2">
-              {selectedDriver.fatigue_score > 7 && (<div className="p-3 bg-card rounded border border-red-500/20">
-                <p className="text-red-700">⚠️ Driver has shown critical fatigue levels. Recommend immediate 20-minute break.</p>
+              {selectedDriver.fatigue_score > 7 && (<div className="p-3 bg-card rounded border border-destructive/20">
+                <p className="text-destructive">⚠️ Driver has shown critical fatigue levels. Recommend immediate 20-minute break.</p>
               </div>)}
-              {selectedDriver.fatigue_score > 4 && selectedDriver.fatigue_score <= 7 && (<div className="p-3 bg-card rounded border border-orange-500/20">
-                <p className="text-orange-700">⚠️ Driver has shown increased fatigue in the past hour. Recommend a 10-minute break.</p>
+              {selectedDriver.fatigue_score > 4 && selectedDriver.fatigue_score <= 7 && (<div className="p-3 bg-card rounded border border-warning/20">
+                <p className="text-warning">⚠️ Driver has shown increased fatigue in the past hour. Recommend a 10-minute break.</p>
               </div>)}
-              {(selectedDriver.battery_level ?? 100) < 40 && (<div className="p-3 bg-card rounded border border-yellow-500/20">
-                <p className="text-yellow-700">🔋 Low battery detected. Suggest driver charges device during next break.</p>
+              {(selectedDriver.battery_level ?? 100) < 40 && (<div className="p-3 bg-card rounded border border-warning/20">
+                <p className="text-warning">🔋 Low battery detected. Suggest driver charges device during next break.</p>
               </div>)}
-              {!selectedDriver.camera_active && (<div className="p-3 bg-card rounded border border-red-500/20">
-                <p className="text-red-700">📷 Camera is inactive. Safety monitoring may be compromised.</p>
+              {!selectedDriver.camera_active && (<div className="p-3 bg-card rounded border border-destructive/20">
+                <p className="text-destructive">📷 Camera is inactive. Safety monitoring may be compromised.</p>
               </div>)}
-              {selectedDriver.idleTime?.includes("hr") && (<div className="p-3 bg-card rounded border border-blue-500/20">
-                <p className="text-blue-700">💡 Driver is consistently staying in low-demand areas. Suggest relocating to Zone A3.</p>
+              {selectedDriver.idleTime?.includes("hr") && (<div className="p-3 bg-card rounded border border-primary/20">
+                <p className="text-primary">💡 Driver is consistently staying in low-demand areas. Suggest relocating to Zone A3.</p>
               </div>)}
             </div>
           </Card>
 
           {/* Safety History */}
           <Card className="p-4">
-            <h4 className="text-foreground mb-4">Safety History (Today)</h4>
+            <h4 className="text-foreground mb-4">Safety & Performance Metrics</h4>
             <div className="space-y-2">
+              {/* Today's Stats - Primary */}
               <div className="flex items-center justify-between p-3 bg-muted rounded">
-                <span className="text-muted-foreground">Safety Alerts</span>
-                <Badge variant="secondary">{driverStats?.today_safety_alerts ?? 0}</Badge>
+                <span className="text-muted-foreground">Today's Safety Score</span>
+                <Badge className={`${
+                  (driverStats?.today_safety_score ?? 100) >= 80 ? 'bg-success/10 text-success' :
+                  (driverStats?.today_safety_score ?? 100) >= 50 ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'
+                }`}>
+                  {driverStats?.today_safety_score?.toFixed(0) ?? "100"}/100
+                </Badge>
               </div>
               <div className="flex items-center justify-between p-3 bg-muted rounded">
-                <span className="text-muted-foreground">Fatigue Score (Avg)</span>
-                <Badge variant="secondary">{driverStats?.average_fatigue_score?.toFixed(1) ?? "0.0"}</Badge>
+                <span className="text-muted-foreground">Today's Safety Alerts</span>
+                <Badge className={driverStats?.today_safety_alerts > 0 ? 'bg-destructive/10 text-destructive' : 'bg-success/10 text-success'}>
+                  {driverStats?.today_safety_alerts ?? 0}
+                </Badge>
               </div>
               <div className="flex items-center justify-between p-3 bg-muted rounded">
-                <span className="text-muted-foreground">Total Orders (Lifetime)</span>
+                <span className="text-muted-foreground">Current Fatigue Level</span>
+                <Badge className={`${getFatigueColor(driverStats?.current_fatigue_score ?? 0)} border-0`}>
+                  {(driverStats?.current_fatigue_score ?? 0).toFixed(1)}/10
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-muted rounded">
+                <span className="text-muted-foreground">Today's Harsh Braking</span>
+                <Badge className={driverStats?.today_harsh_braking > 3 ? 'bg-destructive/10 text-destructive' : 'bg-success/10 text-success'}>
+                  {driverStats?.today_harsh_braking ?? 0}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-muted rounded">
+                <span className="text-muted-foreground">Today's Speeding Events</span>
+                <Badge className={driverStats?.today_speeding > 2 ? 'bg-destructive/10 text-destructive' : 'bg-success/10 text-success'}>
+                  {driverStats?.today_speeding ?? 0}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-muted rounded">
+                <span className="text-muted-foreground">Today's Fatigue Alerts</span>
+                <Badge className={driverStats?.today_fatigue_alerts > 1 ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}>
+                  {driverStats?.today_fatigue_alerts ?? 0}
+                </Badge>
+              </div>
+              
+              {/* 30-Day Averages - Secondary */}
+              <div className="pt-2 mt-2 border-t border-border">
+                <p className="text-xs text-muted-foreground mb-2">30-Day Averages</p>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-muted rounded">
+                <span className="text-muted-foreground">Avg Safety Score (30d)</span>
+                <Badge className={`${
+                  (driverStats?.avg_30d_safety_score ?? 100) >= 80 ? 'bg-success/10 text-success' :
+                  (driverStats?.avg_30d_safety_score ?? 100) >= 50 ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'
+                }`}>
+                  {driverStats?.avg_30d_safety_score?.toFixed(0) ?? "100"}/100
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-muted rounded">
+                <span className="text-muted-foreground">Total Alerts (30d)</span>
+                <Badge variant="secondary">{driverStats?.total_30d_alerts ?? 0}</Badge>
+              </div>
+              
+              {/* Lifetime Stats */}
+              <div className="pt-2 mt-2 border-t border-border">
+                <p className="text-xs text-muted-foreground mb-2">Lifetime Stats</p>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-muted rounded">
+                <span className="text-muted-foreground">Total Orders</span>
                 <Badge variant="secondary">{driverStats?.total_orders ?? 0}</Badge>
               </div>
               <div className="flex items-center justify-between p-3 bg-muted rounded">
                 <span className="text-muted-foreground">Average Rating</span>
                 <Badge variant="secondary">{driverStats?.average_rating?.toFixed(1) ?? "0.0"}/5.0</Badge>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-muted rounded">
+                <span className="text-muted-foreground">Completion Rate</span>
+                <Badge className={driverStats?.completion_rate >= 90 ? 'bg-success/10 text-success' : driverStats?.completion_rate >= 15 ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'}>
+                  {driverStats?.completion_rate?.toFixed(1) ?? "0"}%
+                </Badge>
               </div>
             </div>
           </Card>

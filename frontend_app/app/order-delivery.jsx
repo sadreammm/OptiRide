@@ -74,15 +74,15 @@ export default function OrderDeliveryScreen() {
       longitude: order.pickupLongitude || 55.2780
     },
     {
-      latitude: order.deliveryLatitude || 25.1850,
-      longitude: order.deliveryLongitude || 55.2650
+      latitude: order.dropoffLatitude || 25.1850,
+      longitude: order.dropoffLongitude || 55.2650
     },
   ];
 
   // Map region centered on dropoff
   const initialRegion = {
-    latitude: order.deliveryLatitude || 25.1910,
-    longitude: order.deliveryLongitude || 55.2715,
+    latitude: order.dropoffLatitude || 25.1910,
+    longitude: order.dropoffLongitude || 55.2715,
     latitudeDelta: 0.03,
     longitudeDelta: 0.03,
   };

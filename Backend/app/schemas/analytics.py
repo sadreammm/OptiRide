@@ -100,6 +100,8 @@ class DashboardOverview(BaseModel):
     orders_change_percent: float
     revenue_change_percent: float
     drivers_change_percent: float
+    completion_rate_change_percent: float = 0.0
+    delivery_time_change_percent: float = 0.0
 
     avg_delivery_time_min: float
     order_completion_rate: float
@@ -205,3 +207,98 @@ class ComparativeAnalysis(BaseModel):
 class ForecastResponse(BaseModel):
     status: str
     message: Optional[str] = None
+
+
+# ============================================
+# NEW AGGREGATED ANALYTICS SCHEMAS
+# ============================================
+
+class AlertTypeSummary(BaseModel):
+    """Summary of alerts grouped by type"""
+    alert_type: str
+    count: int
+    percentage: float
+
+class AlertDaySummary(BaseModel):
+    """Summary of alerts grouped by day"""
+    day: str
+    count: int
+
+class AlertZoneSummary(BaseModel):
+    """Summary of alerts grouped by zone"""
+    zone_id: str
+    zone_name: Optional[str] = None
+    count: int
+
+class AlertsSummaryResponse(BaseModel):
+    """Complete alerts summary for analytics dashboard"""
+    total_alerts: int
+    period: str
+    by_type: List[AlertTypeSummary]
+    by_day: List[AlertDaySummary]
+    by_zone: List[AlertZoneSummary]
+    by_severity: Dict[str, int]
+
+
+class SafetyScoreResponse(BaseModel):
+    """Fleet-wide safety score calculation"""
+    overall_score: float  # 0-100
+    grade: str  # A+, A, B, C, D, F
+    trend: str  # improving, declining, stable
+    trend_percentage: float
+    
+    # Component scores
+    fatigue_score: float
+    incident_score: float
+    compliance_score: float
+    behavior_score: float
+    
+    # Key metrics
+    total_incidents: int
+    critical_incidents: int
+    accident_rate: float  # percentage
+    fatigue_alerts_count: int
+    speeding_events: int
+    harsh_braking_events: int
+    
+    # Benchmarks
+    industry_benchmark: float
+    previous_period_score: float
+
+
+class TopPerformerDriver(BaseModel):
+    """Top performing driver details"""
+    driver_id: str
+    name: str
+    efficiency_score: float  # 0-100
+    orders_completed: int
+    total_earnings: float
+    avg_delivery_time_min: float
+    safety_score: float
+    on_time_rate: float
+    rating: float
+
+
+class TopPerformersResponse(BaseModel):
+    """List of top performing drivers"""
+    period: str
+    drivers: List[TopPerformerDriver]
+
+
+class DemandForecastPoint(BaseModel):
+    """Single forecast data point"""
+    hour: str
+    actual: Optional[float] = None
+    predicted: float
+    confidence: float  # 0-1
+
+
+class DemandForecastResponse(BaseModel):
+    """Demand forecast for next N hours"""
+    generated_at: datetime
+    forecast_hours: int
+    current_demand: int
+    peak_predicted_hour: str
+    peak_predicted_demand: float
+    forecasts: List[DemandForecastPoint]
+    recommendations: List[str]

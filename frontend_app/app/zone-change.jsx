@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
-import MapView, { Polygon, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { Polygon } from 'react-native-maps';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { theme } from '@/constants/theme';
@@ -14,7 +14,7 @@ export default function ZoneChangeScreen() {
   return (
     <View style={styles.container}>
       <MapView
-        provider={PROVIDER_DEFAULT}
+        provider="google"
         style={styles.map}
         initialRegion={{
           latitude: 25.1952,

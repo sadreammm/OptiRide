@@ -1,6 +1,12 @@
 import { apiFetch } from "@/lib/http";
 
 export async function fetchDriverOrders(token) {
+  // Use all-orders endpoint to include completed orders for the completed tab
+  return apiFetch("/orders/driver/all-orders?include_completed=true&days=7", { token });
+}
+
+export async function fetchActiveDriverOrders(token) {
+  // Only active (assigned, picked_up) orders
   return apiFetch("/orders/driver/orders", { token });
 }
 

@@ -12,6 +12,9 @@ import {
   MapPinIcon,
   TrendingUpIcon,
   User,
+  Package,
+  Wallet,
+  Coffee,
 } from "lucide-react-native";
 import React, { useState, useEffect } from "react";
 import {
@@ -40,7 +43,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const { isDarkMode } = useTheme();
   const { token } = useAuth();
-  const { isOnline, toggleOnline } = useSensors();
+  const { isOnline, toggleOnline, isOnBreak, breakDuration } = useSensors();
 
   // Dynamic data from API
   const [driverProfile, setDriverProfile] = useState(null);
@@ -107,12 +110,9 @@ export default function HomeScreen() {
   const currentZone = zones.find((z) => z.code === currentZoneCode);
   const assignedZone = zones.find((z) => z.code === assignedZoneCode);
 
-  // Calculate deliveries progress
-  const deliveriesCompleted = performanceStats?.today_orders || 0;
-  const totalDeliveries = performanceStats?.total_orders || 20; // Fallback to 20
-  const progressPercentage = totalDeliveries > 0
-    ? Math.min((deliveriesCompleted / Math.max(totalDeliveries, deliveriesCompleted)) * 100, 100)
-    : 0;
+  // Today's stats
+  const todaysDeliveries = performanceStats?.today_orders || 0;
+  const todaysEarnings = performanceStats?.today_earnings || 0;
 
   const bgColor = isDarkMode ? "#111827" : "#F9FAFB";
 
@@ -172,21 +172,27 @@ export default function HomeScreen() {
           <Text style={styles.nameText}>{driverProfile?.name || "Driver"}</Text>
           <View style={styles.statusRow}>
             <StatusBadge
-              status={statusDisplay.status}
-              label={statusDisplay.label}
+              status={isOnBreak ? "break" : isOnline ? "online" : "offline"}
+              label={isOnBreak ? "Status: On Break" : isOnline ? "Status: Online" : "Status: Offline"}
               style={styles.statusBadge}
             />
-            <TouchableOpacity
-              onPress={toggleOnline}
-              style={[
-                styles.miniActionButton,
-                { backgroundColor: isOnline ? theme.colors.error : theme.colors.success }
-              ]}
-            >
-              <Text style={styles.miniActionButtonText}>
-                {isOnline ? "Go Offline" : "Go Online"}
-              </Text>
-            </TouchableOpacity>
+            {!isOnBreak && (
+              <TouchableOpacity
+                onPress={async () => {
+                  await toggleOnline();
+                  // Refresh profile data after toggle
+                  setTimeout(loadData, 500);
+                }}
+                style={[
+                  styles.miniActionButton,
+                  { backgroundColor: isOnline ? theme.colors.error : theme.colors.success }
+                ]}
+              >
+                <Text style={styles.miniActionButtonText}>
+                  {isOnline ? "Go Offline" : "Go Online"}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -213,7 +219,7 @@ export default function HomeScreen() {
               <View style={styles.mapPreview}>
                 {Platform.OS !== 'web' && MapView ? (
                   <MapView
-                    provider={PROVIDER_DEFAULT}
+                    provider="google"
                     style={styles.miniMap}
                     initialRegion={{
                       latitude: currentZone?.coordinates[0].latitude || 25.2048,
@@ -281,23 +287,46 @@ export default function HomeScreen() {
               </Text>
             </View>
           </View>
-          <View style={styles.progressSection}>
-            <View style={styles.progressHeader}>
-              <Text style={styles.progressLabel}>Deliveries Completed</Text>
-              <Text style={styles.progressValue}>
-                {deliveriesCompleted}/{Math.max(totalDeliveries, deliveriesCompleted)}
-              </Text>
+        </Card>
+
+        {/* Today's Stats Card */}
+        <Card style={styles.statsCard}>
+          <View style={styles.zoneHeader}>
+            <TrendingUpIcon size={20} color={theme.colors.primary} />
+            <Text style={styles.zoneTitle}>Today's Stats</Text>
+          </View>
+          <View style={styles.statsGrid}>
+            <View style={styles.statItem}>
+              <View style={[styles.statIconContainer, { backgroundColor: theme.colors.primary + '20' }]}>
+                <Package size={24} color={theme.colors.primary} />
+              </View>
+              <Text style={styles.statValue}>{todaysDeliveries}</Text>
+              <Text style={styles.statLabel}>Deliveries</Text>
             </View>
-            <View style={styles.progressBar}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${progressPercentage}%` },
-                ]}
-              />
+            <View style={styles.statItem}>
+              <View style={[styles.statIconContainer, { backgroundColor: theme.colors.success + '20' }]}>
+                <Wallet size={24} color={theme.colors.success} />
+              </View>
+              <Text style={styles.statValue}>AED {todaysEarnings.toFixed(2)}</Text>
+              <Text style={styles.statLabel}>Earnings</Text>
             </View>
           </View>
         </Card>
+
+        {/* Take Break Button */}
+        {(isOnline || isOnBreak) && (
+          <TouchableOpacity
+            style={[styles.breakButton, isOnBreak && { backgroundColor: theme.colors.error }]}
+            onPress={() => router.push("/take-break")}
+          >
+            <Coffee size={20} color="#FFFFFF" />
+            <Text style={styles.breakButtonText}>
+              {isOnBreak 
+                ? `On Break: ${Math.floor(breakDuration / 60)}:${(breakDuration % 60).toString().padStart(2, '0')}`
+                : "Take a Break"}
+            </Text>
+          </TouchableOpacity>
+        )}
 
       </ScrollView>
     </View>
@@ -519,6 +548,52 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     color: "#ffffff",
+    fontSize: theme.fontSize.base,
+    fontWeight: "600",
+  },
+  statsCard: {
+    marginBottom: theme.spacing.md,
+  },
+  statsGrid: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    paddingVertical: theme.spacing.md,
+  },
+  statItem: {
+    alignItems: "center",
+    flex: 1,
+  },
+  statIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: theme.spacing.sm,
+  },
+  statValue: {
+    fontSize: theme.fontSize.xl,
+    fontWeight: "700",
+    color: theme.colors.text,
+    marginBottom: 2,
+  },
+  statLabel: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.textSecondary,
+  },
+  breakButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.warning,
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.md,
+    gap: 8,
+  },
+  breakButtonText: {
+    color: "#FFFFFF",
     fontSize: theme.fontSize.base,
     fontWeight: "600",
   },

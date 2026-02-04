@@ -87,5 +87,70 @@ export const analyticsService = {
         } catch (error) {
             throw handleApiError(error);
         }
+    },
+
+    // ============================================
+    // NEW AGGREGATED ANALYTICS ENDPOINTS
+    // ============================================
+
+    /**
+     * Get aggregated alerts summary for analytics dashboard
+     * @param {string} period - 'today', 'last_7_days', 'this_month'
+     */
+    async getAlertsSummary(period = 'last_7_days') {
+        try {
+            const response = await apiClient.get('/analytics/alerts/summary', {
+                params: { period }
+            });
+            return response.data;
+        } catch (error) {
+            throw handleApiError(error);
+        }
+    },
+
+    /**
+     * Get fleet-wide safety score with component breakdown
+     * @param {string} period - 'today', 'last_7_days', 'this_month'
+     */
+    async getSafetyScore(period = 'last_7_days') {
+        try {
+            const response = await apiClient.get('/analytics/safety/score', {
+                params: { period }
+            });
+            return response.data;
+        } catch (error) {
+            throw handleApiError(error);
+        }
+    },
+
+    /**
+     * Get top performing drivers
+     * @param {string} period - 'today', 'last_7_days', 'this_month'
+     * @param {number} limit - Number of top performers to return (1-20)
+     */
+    async getTopPerformers(period = 'last_7_days', limit = 5) {
+        try {
+            const response = await apiClient.get('/analytics/drivers/top-performers', {
+                params: { period, limit }
+            });
+            return response.data;
+        } catch (error) {
+            throw handleApiError(error);
+        }
+    },
+
+    /**
+     * Get demand forecast for next N hours
+     * @param {number} hours - Number of hours to forecast (1-24)
+     */
+    async getDemandForecast(hours = 12) {
+        try {
+            const response = await apiClient.get('/analytics/demand/forecast', {
+                params: { hours }
+            });
+            return response.data;
+        } catch (error) {
+            throw handleApiError(error);
+        }
     }
 };

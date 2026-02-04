@@ -37,6 +37,7 @@ async def create_order(
 async def webhook_create_order(
     order_data: OrderCreate,
     auto_assign: bool = False,
+    driver_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -55,22 +56,60 @@ async def webhook_create_order(
         "restaurant_contact": "+0987654321",
         "price": 25.50
     }
+    
+    Query params:
+    - auto_assign=true: Assign to nearest available driver
+    - driver_id=<uuid>: Assign to specific driver (overrides auto_assign)
     """
     order_service = OrderService(db)
     order = order_service.create_order(order_data)
     
-    if auto_assign:
+    # If specific driver_id provided, assign to that driver
+    if driver_id:
+        try:
+            order = order_service.offer_to_driver(order.order_id, driver_id)
+            await socket_manager.notify_new_order_to_driver(driver_id, {
+                "order_id": order.order_id,
+                "pickup_address": order.pickup_address,
+                "pickup_latitude": order.pickup_latitude,
+                "pickup_longitude": order.pickup_longitude,
+                "dropoff_address": order.dropoff_address,
+                "dropoff_latitude": order.dropoff_latitude,
+                "dropoff_longitude": order.dropoff_longitude,
+                "customer_name": order.customer_name,
+                "customer_contact": order.customer_contact,
+                "restaurant_name": order.restaurant_name,
+                "restaurant_contact": order.restaurant_contact,
+                "price": order.price,
+                "estimated_distance_km": order.distance_km,
+                "estimated_duration_min": order.duration_min,
+                "estimated_pickup_time": order.pickup_time.isoformat() if order.pickup_time else None,
+                "estimated_dropoff_time": order.dropoff_time.isoformat() if order.dropoff_time else None,
+            })
+        except HTTPException:
+            pass
+    elif auto_assign:
         try:
             order = order_service.auto_assign_order(order.order_id)
-            # Notify driver about new order offer
+            # Notify driver about new order offer with complete order data
             if order.driver_id:
                 await socket_manager.notify_new_order_to_driver(order.driver_id, {
                     "order_id": order.order_id,
                     "pickup_address": order.pickup_address,
+                    "pickup_latitude": order.pickup_latitude,
+                    "pickup_longitude": order.pickup_longitude,
                     "dropoff_address": order.dropoff_address,
+                    "dropoff_latitude": order.dropoff_latitude,
+                    "dropoff_longitude": order.dropoff_longitude,
+                    "customer_name": order.customer_name,
+                    "customer_contact": order.customer_contact,
+                    "restaurant_name": order.restaurant_name,
+                    "restaurant_contact": order.restaurant_contact,
                     "price": order.price,
-                    "distance_km": order.distance_km,
-                    "duration_min": order.duration_min
+                    "estimated_distance_km": order.distance_km,
+                    "estimated_duration_min": order.duration_min,
+                    "estimated_pickup_time": order.pickup_time.isoformat() if order.pickup_time else None,
+                    "estimated_dropoff_time": order.dropoff_time.isoformat() if order.dropoff_time else None,
                 })
         except HTTPException:
             pass
@@ -229,8 +268,28 @@ def get_driver_orders(
     db: Session = Depends(get_db),
     current_driver: Driver = Depends(get_current_driver),
 ):
+    """Get active orders for the current driver (assigned, picked_up)"""
     order_service = OrderService(db)
     orders = order_service.get_active_orders_for_driver(driver_id=current_driver.driver_id)
+    return {
+        "count": len(orders),
+        "orders": [OrderResponse.model_validate(order) for order in orders]
+    }
+
+@router.get("/driver/all-orders")
+def get_all_driver_orders(
+    db: Session = Depends(get_db),
+    current_driver: Driver = Depends(get_current_driver),
+    include_completed: bool = True,
+    days: int = 7,
+):
+    """Get all orders for the current driver (including completed and cancelled)"""
+    order_service = OrderService(db)
+    orders = order_service.get_all_orders_for_driver(
+        driver_id=current_driver.driver_id,
+        include_completed=include_completed,
+        days=days
+    )
     return {
         "count": len(orders),
         "orders": [OrderResponse.model_validate(order) for order in orders]

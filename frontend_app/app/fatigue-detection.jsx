@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { useSensors } from '@/contexts/SensorContext';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 
 export default function FatigueDetectionScreen() {
   const router = useRouter();
@@ -13,8 +14,17 @@ export default function FatigueDetectionScreen() {
   const [progress] = useState(new Animated.Value(0));
   const [scanAnimation] = useState(new Animated.Value(0));
   const hasStartedMonitoring = useRef(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const [cameraReady, setCameraReady] = useState(false);
 
   const orderId = params.orderId;
+
+  // Request camera permission on mount
+  useEffect(() => {
+    if (!permission?.granted) {
+      requestPermission();
+    }
+  }, [permission, requestPermission]);
 
   useEffect(() => {
     Animated.loop(
@@ -34,7 +44,7 @@ export default function FatigueDetectionScreen() {
 
     const timer = setTimeout(() => {
       handleFatigueCheckPassed();
-    }, 3000);
+    }, 4000); // Give more time for camera to load
 
     return () => clearTimeout(timer);
   }, [scanAnimation]);
@@ -60,12 +70,9 @@ export default function FatigueDetectionScreen() {
       setIsStartingSensors(false);
     }
 
-    // Navigate to order pickup after a short delay
+    // Navigate to map tab (which shows the route) after a short delay
     setTimeout(() => {
-      router.replace({
-        pathname: '/order-pickup',
-        params: { orderId: orderId }
-      });
+      router.replace('/(tabs)/map');
     }, 2000);
   };
 
@@ -73,6 +80,9 @@ export default function FatigueDetectionScreen() {
     inputRange: [0, 1],
     outputRange: [-100, 100],
   });
+
+  // Camera not available (web or no permission yet granted)
+  const showCameraFallback = Platform.OS === 'web' || !permission?.granted;
 
   return (
     <View style={styles.container}>
@@ -82,13 +92,37 @@ export default function FatigueDetectionScreen() {
         <View style={styles.circle}>
           {!isPassed ? (
             <>
-              <View style={styles.face} />
+              {showCameraFallback ? (
+                // Fallback for web or no camera permission
+                <View style={styles.cameraFallback}>
+                  <View style={styles.face} />
+                  <Text style={styles.permissionText}>
+                    {!permission?.granted ? 'Camera permission required' : 'Camera not available'}
+                  </Text>
+                </View>
+              ) : (
+                // Show actual camera feed - using View wrapper with proper dimensions
+                <View style={styles.cameraContainer}>
+                  <CameraView
+                    style={styles.camera}
+                    facing="front"
+                    onCameraReady={() => {
+                      console.log('Camera is ready');
+                      setCameraReady(true);
+                    }}
+                  />
+                </View>
+              )}
               <Animated.View
                 style={[
                   styles.scanLine,
                   { transform: [{ translateY: scanTranslateY }] }
                 ]}
               />
+              {/* Overlay frame for face positioning */}
+              <View style={styles.faceOverlay}>
+                <View style={styles.faceGuide} />
+              </View>
             </>
           ) : (
             <View style={styles.checkmark}>
@@ -106,13 +140,15 @@ export default function FatigueDetectionScreen() {
 
       {!isPassed && (
         <View style={styles.progressContainer}>
-          <Text style={styles.progressText}>Scanning...</Text>
+          <Text style={styles.progressText}>
+            {cameraReady ? 'Analyzing...' : 'Initializing camera...'}
+          </Text>
         </View>
       )}
 
       {isPassed && !isStartingSensors && (
         <Text style={styles.caption}>
-          Safety monitoring active • Proceeding to pickup
+          Safety monitoring active • Opening navigation
         </Text>
       )}
     </View>
@@ -149,7 +185,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    backgroundColor: '#1e293b',
+  },
+  cameraContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    overflow: 'hidden',
+    borderRadius: 120,
+  },
+  camera: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  cameraFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   face: {
     width: 80,
@@ -158,6 +212,25 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255, 255, 255, 0.3)',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  permissionText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.6)',
+    textAlign: 'center',
+  },
+  faceOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  faceGuide: {
+    width: 100,
+    height: 130,
+    borderRadius: 50,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    borderStyle: 'dashed',
   },
   scanLine: {
     position: 'absolute',

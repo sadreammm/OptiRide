@@ -10,7 +10,8 @@ from app.services.analytics_service import AnalyticsService
 from app.schemas.analytics import (
     DashboardOverview, RealtimeMetrics, ZoneHeatmap,
     TrendData, ReportRequest, ReportResponse, PerformanceAnalysis,
-    MetricPeriod, ForecastResponse
+    MetricPeriod, ForecastResponse, AlertsSummaryResponse,
+    SafetyScoreResponse, TopPerformersResponse, DemandForecastResponse
 )
 
 router = APIRouter()
@@ -127,3 +128,78 @@ def get_zone_analytics_summary(
         "period": period,
         "metrics": metrics
     }
+
+
+# ============================================
+# NEW AGGREGATED ANALYTICS ENDPOINTS
+# ============================================
+
+@router.get("/alerts/summary", response_model=AlertsSummaryResponse)
+def get_alerts_summary(
+    period: str = Query("last_7_days", description="Period: today, last_7_days, this_month"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Get aggregated alerts summary for analytics dashboard.
+    Returns alerts grouped by type, day, zone, and severity.
+    """
+    analytics_service = AnalyticsService(db)
+    return analytics_service.get_alerts_summary(period=period)
+
+
+@router.get("/safety/score", response_model=SafetyScoreResponse)
+def get_safety_score(
+    period: str = Query("last_7_days", description="Period: today, last_7_days, this_month"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Calculate and return fleet-wide safety score.
+    
+    Safety score is calculated based on:
+    - Fatigue alerts (25% weight)
+    - Incident severity and count (35% weight)
+    - Alert acknowledgment compliance (20% weight)
+    - Driving behavior patterns (20% weight)
+    
+    Returns overall score (0-100), grade (A+ to F), and component breakdowns.
+    """
+    analytics_service = AnalyticsService(db)
+    return analytics_service.get_safety_score(period=period)
+
+
+@router.get("/drivers/top-performers", response_model=TopPerformersResponse)
+def get_top_performers(
+    period: str = Query("last_7_days", description="Period: today, last_7_days, this_month"),
+    limit: int = Query(5, ge=1, le=20, description="Number of top performers to return"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Get top performing drivers based on efficiency score.
+    
+    Efficiency score factors:
+    - Order volume (30% weight)
+    - Delivery speed (25% weight)
+    - Safety record (25% weight)
+    - On-time delivery rate (20% weight)
+    """
+    analytics_service = AnalyticsService(db)
+    return analytics_service.get_top_performers(period=period, limit=limit)
+
+
+@router.get("/demand/forecast", response_model=DemandForecastResponse)
+def get_demand_forecast(
+    hours: int = Query(12, ge=1, le=24, description="Number of hours to forecast"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Get demand forecast for the next N hours.
+    
+    Uses historical patterns and time-based adjustments to predict demand.
+    Returns forecasts with confidence levels and operational recommendations.
+    """
+    analytics_service = AnalyticsService(db)
+    return analytics_service.get_demand_forecast(hours=hours)

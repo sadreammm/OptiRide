@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from "react";
 import { useRouter } from "expo-router";
-import { Bell, Search, User, X } from "lucide-react-native";
+import { Bell, Search, User, X, Check } from "lucide-react-native";
 import { useOrders } from "@/contexts/OrdersContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { acceptOrder, rejectOrder } from "@/services/orders";
 import {
   ActivityIndicator,
   Image,
@@ -20,6 +22,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 export default function OrdersScreen() {
   const router = useRouter();
   const { theme } = useTheme();
+  const { token } = useAuth();
   const {
     orders,
     isLoadingOrders,
@@ -34,6 +37,8 @@ export default function OrdersScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const [acceptingOrderId, setAcceptingOrderId] = useState(null);
+  const [rejectingOrderId, setRejectingOrderId] = useState(null);
 
   const textColor = theme.colors.text;
   const subTextColor = theme.colors.textSecondary;
@@ -211,8 +216,8 @@ export default function OrdersScreen() {
                   <TouchableOpacity
                     style={styles.navigateButton}
                     onPress={() => {
-                      const pathname = order.actionType === "delivery" ? "/order-delivery" : "/order-pickup";
-                      router.push({ pathname, params: { orderId: order.id } });
+                      // Navigate to the map tab which will show the active order route
+                      router.push("/(tabs)/map");
                     }}
                   >
                     <Text style={styles.navigateButtonText}>Navigate</Text>
@@ -224,9 +229,55 @@ export default function OrdersScreen() {
                     <Text style={styles.reviewSummaryButtonText}>Review Summary</Text>
                   </TouchableOpacity>
                 ) : order.status === "pending" ? (
-                  <TouchableOpacity style={styles.refreshButton} onPress={() => refetchOrders()}>
-                    <Text style={styles.refreshButtonText}>Refresh Status</Text>
-                  </TouchableOpacity>
+                  <View style={styles.pendingActions}>
+                    <TouchableOpacity 
+                      style={styles.acceptButton} 
+                      onPress={async () => {
+                        if (!token) return;
+                        setAcceptingOrderId(order.id);
+                        try {
+                          await acceptOrder(token, order.id);
+                          await refetchOrders();
+                          // Navigate to fatigue detection
+                          router.push({
+                            pathname: '/fatigue-detection',
+                            params: { orderId: order.id }
+                          });
+                        } catch (e) {
+                          console.error('Failed to accept order:', e);
+                        }
+                        setAcceptingOrderId(null);
+                      }}
+                      disabled={acceptingOrderId === order.id}
+                    >
+                      {acceptingOrderId === order.id ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.acceptButtonText}>Accept</Text>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={styles.declineButton} 
+                      onPress={async () => {
+                        if (!token) return;
+                        setRejectingOrderId(order.id);
+                        try {
+                          await rejectOrder(token, order.id);
+                          await refetchOrders();
+                        } catch (e) {
+                          console.error('Failed to reject order:', e);
+                        }
+                        setRejectingOrderId(null);
+                      }}
+                      disabled={rejectingOrderId === order.id}
+                    >
+                      {rejectingOrderId === order.id ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.declineButtonText}>Decline</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 ) : (
                   <TouchableOpacity
                     style={[
@@ -482,6 +533,36 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 12,
+  },
+  pendingActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  acceptButton: {
+    backgroundColor: "#10B981",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    minWidth: 70,
+    alignItems: "center",
+  },
+  acceptButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#FFFFFF",
+  },
+  declineButton: {
+    backgroundColor: "#EF4444",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    minWidth: 70,
+    alignItems: "center",
+  },
+  declineButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
   refreshButton: {
     backgroundColor: "#547690",
