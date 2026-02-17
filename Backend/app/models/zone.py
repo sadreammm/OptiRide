@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy import Column, String, Integer, Float, JSON, Boolean, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from geoalchemy2 import Geometry

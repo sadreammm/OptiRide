@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings, ALLOWED_ORIGINS
 from app.db.database import engine, Base
-from app.routers import auth, driver, safety, order, analytics
+from app.routers import auth, driver, safety, order, analytics, forecasting
 from app.core.socket_manager import sio_app
 from app.models import alert, analytics as analytics_model, assignment, break_model, \
     driver as driver_model, event, gps_track, order as order_model, weather, sensor_record, user, zone
@@ -29,6 +29,7 @@ app.include_router(driver.router, prefix="/drivers", tags=["Drivers"])
 app.include_router(safety.router, prefix="/safety", tags=["Safety Monitoring"])
 app.include_router(order.router, prefix="/orders", tags=["Orders"])
 app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
+app.include_router(forecasting.router, prefix="/forecasting", tags=["Forecasting"])
 
 @app.get("/")
 async def root():

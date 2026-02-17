@@ -821,95 +821,149 @@ class AnalyticsService:
 
     def get_demand_forecast(self, hours: int = 12) -> DemandForecastResponse:
         """
-        Get demand forecast for the next N hours.
-        Uses ML model if available, otherwise uses historical patterns.
+        Get demand forecast showing past 12h actual + next N hours predicted.
+        All values are orders-per-hour. Times displayed in Dubai local (UTC+4).
         """
         now = datetime.utcnow()
         current_hour = now.hour
+        DUBAI_OFFSET = 4  # UTC+4
         
-        # Get current demand (pending + in-progress orders)
-        current_demand = self.db.query(Order).filter(
-            Order.status.in_([OrderStatus.pending.value, OrderStatus.assigned.value, OrderStatus.picked_up.value])
-        ).count()
+        # ── Historical hourly averages (last 4 weeks, same weekday) ──
+        # PostgreSQL DOW: Sun=0, Mon=1 ... Sat=6
+        # Python weekday(): Mon=0, Tue=1 ... Sun=6
+        pg_dow = (now.weekday() + 1) % 7
         
-        # Get historical patterns for same day of week
-        day_of_week = now.weekday()
+        # Count how many distinct dates of this weekday exist in last 4 weeks
+        distinct_dates = self.db.query(
+            func.count(func.distinct(func.date(Order.created_at)))
+        ).filter(
+            extract('dow', Order.created_at) == pg_dow,
+            Order.created_at >= now - timedelta(weeks=4)
+        ).scalar() or 1
         
-        # Query historical hourly patterns (last 4 weeks same day)
         historical_query = self.db.query(
             extract('hour', Order.created_at).label('hour'),
             func.count(Order.order_id).label('count')
         ).filter(
-            extract('dow', Order.created_at) == day_of_week,
+            extract('dow', Order.created_at) == pg_dow,
             Order.created_at >= now - timedelta(weeks=4)
         ).group_by(text('hour')).all()
         
-        hour_avg = {int(row[0]): row[1] / 4 for row in historical_query}  # Average over 4 weeks
+        hour_avg = {int(row[0]): row[1] / max(1, distinct_dates) for row in historical_query}
         
+        # ── Actual orders per hour for today only ──
+        past_hours = 12
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        actual_query = self.db.query(
+            extract('hour', Order.created_at).label('hour'),
+            func.count(Order.order_id).label('count')
+        ).filter(
+            Order.created_at >= today_start,
+            Order.created_at < now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        ).group_by(text('hour')).all()
+        
+        actual_by_hour = {int(row[0]): row[1] for row in actual_query}
+        
+        # ── Total active orders (for response metadata) ──
+        total_active_orders = self.db.query(Order).filter(
+            Order.status.in_([OrderStatus.pending.value, OrderStatus.assigned.value, OrderStatus.picked_up.value])
+        ).count()
+        
+        # ── Build chart data: past 12h (actual) + now + next N hours (predicted) ──
         forecasts = []
-        peak_hour = current_hour
-        peak_demand = current_demand
+        peak_hour_utc = current_hour
+        peak_demand = 0
         
-        for i in range(hours + 1):
-            forecast_hour = (current_hour + i) % 24
-            hour_label = "Now" if i == 0 else f"+{i}h"
+        # Past hours: show actual data
+        for i in range(past_hours, 0, -1):
+            utc_hour = (current_hour - i) % 24
+            local_hour = (utc_hour + DUBAI_OFFSET) % 24
+            actual_count = actual_by_hour.get(utc_hour, 0)
+            hist_avg = hour_avg.get(utc_hour, 0)
             
-            if i == 0:
-                # Current hour - use actual data
-                predicted = current_demand
-                actual = current_demand
-                confidence = 1.0
-            else:
-                # Future hours - use historical pattern or ML model
-                base_prediction = hour_avg.get(forecast_hour, current_demand)
-                
-                # Apply time-based adjustments
-                # Peak hours: 12-14 (lunch), 18-21 (dinner)
-                if 12 <= forecast_hour <= 14:
-                    multiplier = 1.3
-                elif 18 <= forecast_hour <= 21:
-                    multiplier = 1.5
-                elif 0 <= forecast_hour <= 6:
-                    multiplier = 0.3
-                else:
-                    multiplier = 1.0
-                
-                predicted = base_prediction * multiplier
-                actual = None
-                # Confidence decreases with time
-                confidence = max(0.5, 1.0 - (i * 0.04))
+            # If no actual data for this hour, use historical average
+            display_actual = actual_count if actual_count > 0 else hist_avg
             
             forecasts.append(DemandForecastPoint(
-                hour=hour_label,
-                actual=actual,
+                hour=f"{local_hour:02d}:00",
+                actual=round(display_actual, 0),
+                predicted=round(hist_avg * self._get_demand_multiplier(local_hour), 0),
+                confidence=1.0
+            ))
+        
+        # Current hour
+        current_actual = actual_by_hour.get(current_hour, 0)
+        current_hist = hour_avg.get(current_hour, 0)
+        current_local = (current_hour + DUBAI_OFFSET) % 24
+        # Use actual if available, otherwise historical average
+        now_value = current_actual if current_actual > 0 else current_hist
+        
+        forecasts.append(DemandForecastPoint(
+            hour=f"{current_local:02d}:00 ★",
+            actual=round(now_value, 0),
+            predicted=round(now_value, 0),
+            confidence=1.0
+        ))
+        peak_demand = now_value
+        
+        # Future hours: predictions only
+        for i in range(1, hours + 1):
+            utc_hour = (current_hour + i) % 24
+            local_hour = (utc_hour + DUBAI_OFFSET) % 24
+            base_prediction = hour_avg.get(utc_hour, now_value)
+            multiplier = self._get_demand_multiplier(local_hour)
+            predicted = base_prediction * multiplier
+            confidence = max(0.5, 1.0 - (i * 0.04))
+            
+            forecasts.append(DemandForecastPoint(
+                hour=f"{local_hour:02d}:00",
+                actual=None,
                 predicted=round(predicted, 0),
                 confidence=round(confidence, 2)
             ))
             
             if predicted > peak_demand:
                 peak_demand = predicted
-                peak_hour = forecast_hour
+                peak_hour_utc = utc_hour
         
-        # Generate recommendations
+        # ── Recommendations (use local time) ──
+        peak_local = (peak_hour_utc + DUBAI_OFFSET) % 24
         recommendations = []
-        if peak_demand > current_demand * 1.5:
-            recommendations.append(f"Demand expected to peak at {peak_hour}:00. Consider deploying additional drivers.")
+        if peak_demand > now_value * 1.5 and peak_demand > 3:
+            recommendations.append(
+                f"Demand expected to peak at {peak_local:02d}:00. Consider deploying additional drivers."
+            )
         
-        # Check driver availability
         available_drivers = self.db.query(Driver).filter(
             Driver.status == DriverStatus.AVAILABLE.value
         ).count()
         
-        if peak_demand > available_drivers * 5:  # Assume 5 orders per driver capacity
+        if peak_demand > available_drivers * 5:
             shortage = int((peak_demand / 5) - available_drivers)
-            recommendations.append(f"Driver shortage expected. Need approximately {shortage} more drivers for peak demand.")
+            if shortage > 0:
+                recommendations.append(
+                    f"Driver shortage expected. Need approximately {shortage} more drivers for peak demand."
+                )
         
         return DemandForecastResponse(
             generated_at=now,
             forecast_hours=hours,
-            current_demand=current_demand,
-            peak_predicted_hour=f"{peak_hour}:00",
+            current_demand=total_active_orders,
+            peak_predicted_hour=f"{peak_local:02d}:00",
             peak_predicted_demand=round(peak_demand, 0),
             forecasts=forecasts,
             recommendations=recommendations
         )
+
+    def _get_demand_multiplier(self, local_hour: int) -> float:
+        """Time-based demand multiplier using Dubai local hour."""
+        if 12 <= local_hour <= 14:
+            return 1.3  # Lunch peak
+        elif 18 <= local_hour <= 21:
+            return 1.5  # Dinner peak
+        elif 0 <= local_hour <= 6:
+            return 0.3  # Night low
+        else:
+            return 1.0
+

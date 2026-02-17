@@ -43,14 +43,14 @@ class FeatureEngineer:
         df.set_index('timestamp', inplace=True)
         
         if aggregation == "hourly":
-            agg_df = df.resample('H').agg({
+            agg_df = df.resample('h').agg({
                 'order_id': 'count',
                 'price': 'mean',
                 'distance_km': 'mean',
                 'duration_min': 'mean'
             })
         else:
-            agg_df = df.resample('15T').agg({
+            agg_df = df.resample('15min').agg({
                 'order_id': 'count',
                 'price': 'mean',
                 'distance_km': 'mean',
@@ -170,29 +170,66 @@ class FeatureEngineer:
 
         features = {}
 
+        # --- Time features (must match _create_time_features) ---
         features['hour'] = forecast_time.hour
         features['day_of_week'] = forecast_time.weekday()
         features['day_of_month'] = forecast_time.day
+        features['week_of_year'] = forecast_time.isocalendar()[1]
         features['month'] = forecast_time.month
-        features['is_weekend'] = 1 if forecast_time.weekday() >= 5 else 0
-        features['is_breakfast'] = 1 if 7 <= forecast_time.hour <= 11 else 0
-        features['is_lunch'] = 1 if 12 <= forecast_time.hour <= 15 else 0
-        features['is_dinner'] = 1 if 18 <= forecast_time.hour <= 21 else 0     
+        features['quarter'] = (forecast_time.month - 1) // 3 + 1
+        features['year'] = forecast_time.year
 
+        features['is_weekend'] = 1 if forecast_time.weekday() >= 5 else 0
+        # Use < (exclusive upper bound) to match training's & operator
+        features['is_breakfast'] = 1 if 7 <= forecast_time.hour < 11 else 0
+        features['is_lunch'] = 1 if 12 <= forecast_time.hour < 15 else 0
+        features['is_dinner'] = 1 if 18 <= forecast_time.hour < 21 else 0
+        features['is_late_night'] = 1 if forecast_time.hour >= 22 or forecast_time.hour < 3 else 0
+        features['is_workday'] = 1 if forecast_time.weekday() < 5 else 0
+
+        # --- Cyclical features (must match _create_cyclical_features) ---
         features['hour_sin'] = np.sin(2 * np.pi * features['hour'] / 24)
-        features['hour_cos'] = np.cos(2 * np.pi * features['hour'] / 24)     
+        features['hour_cos'] = np.cos(2 * np.pi * features['hour'] / 24)
         features['dow_sin'] = np.sin(2 * np.pi * features['day_of_week'] / 7)
         features['dow_cos'] = np.cos(2 * np.pi * features['day_of_week'] / 7)
-        
+        features['dom_sin'] = np.sin(2 * np.pi * features['day_of_month'] / 30)
+        features['dom_cos'] = np.cos(2 * np.pi * features['day_of_month'] / 30)
+        features['woy_sin'] = np.sin(2 * np.pi * features['week_of_year'] / 52)
+        features['woy_cos'] = np.cos(2 * np.pi * features['week_of_year'] / 52)
+        features['month_sin'] = np.sin(2 * np.pi * features['month'] / 12)
+        features['month_cos'] = np.cos(2 * np.pi * features['month'] / 12)
+        features['quarter_sin'] = np.sin(2 * np.pi * features['quarter'] / 4)
+        features['quarter_cos'] = np.cos(2 * np.pi * features['quarter'] / 4)
+        features['year_sin'] = np.sin(2 * np.pi * features['year'] / 100)
+        features['year_cos'] = np.cos(2 * np.pi * features['year'] / 100)
+
+        # --- Lag features from recent demand ---
         recent_demand = self._get_recent_demand(zone_id, forecast_time)
         features.update(recent_demand)
-        
+
+        # --- Rolling feature approximations ---
+        rolling = self._get_rolling_demand(zone_id, forecast_time)
+        features.update(rolling)
+
+        # --- Derived features (must match _create_derived_features) ---
+        features['weekend_dinner'] = features['is_weekend'] * features['is_dinner']
+        features['workday_lunch'] = features['is_workday'] * features['is_lunch']
+
+        if 'demand_lag_1' in features and 'demand_lag_2' in features:
+            features['demand_momentum'] = features['demand_lag_1'] - features['demand_lag_2']
+
+        # Avg price/distance/duration default to 0 - these will be zero-filled anyway
+        features['price'] = 0.0
+        features['distance_km'] = 0.0
+        features['duration_min'] = 0.0
+
         return features
     
     def _get_recent_demand(self, zone_id: str, current_time: datetime) -> Dict[str, Any]:
         lags = {}
 
-        for lag_hours in [1, 2, 3, 6, 12, 24]:
+        # Must match ALL lag values from _create_lag_features: [1, 2, 3, 6, 12, 24, 48, 168]
+        for lag_hours in [1, 2, 3, 6, 12, 24, 48, 168]:
             lag_time = current_time - timedelta(hours=lag_hours)
             window_start = lag_time - timedelta(minutes=30)
             window_end = lag_time + timedelta(minutes=30)
@@ -206,4 +243,30 @@ class FeatureEngineer:
             lags[f'demand_lag_{lag_hours}'] = float(count)
             
         return lags
+
+    def _get_rolling_demand(self, zone_id: str, current_time: datetime) -> Dict[str, Any]:
+        """Approximate rolling window features by querying recent order counts."""
+        rolling = {}
+
+        for window in [3, 6, 12, 24]:
+            window_start = current_time - timedelta(hours=window)
+            
+            orders_in_window = self.db.query(Order).filter(
+                Order.pickup_zone == zone_id,
+                Order.created_at >= window_start,
+                Order.created_at <= current_time
+            ).count()
+
+            avg = orders_in_window / window if window > 0 else 0.0
+            rolling[f'demand_rolling_mean_{window}'] = avg
+            rolling[f'demand_rolling_std_{window}'] = 0.0  # Cannot compute std from a single aggregate
+            rolling[f'demand_rolling_min_{window}'] = 0.0
+            rolling[f'demand_rolling_max_{window}'] = float(orders_in_window)
+
+        # demand_cv approximation
+        mean_24 = rolling.get('demand_rolling_mean_24', 0.0)
+        rolling['demand_cv'] = 0.0  # std / (mean + 1) — with std=0 this is 0
+
+        return rolling
+
             

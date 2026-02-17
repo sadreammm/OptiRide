@@ -23,7 +23,7 @@ export function Analytics() {
   const { data: realtimeMetrics, refetch: refetchRealtime } = useRealtimeMetrics();
   const { data: fleetCharts, refetch: refetchCharts } = useFleetDashboardCharts();
   const { data: safetyAlerts, refetch: refetchAlerts } = useSafetyAlerts();
-  
+
   // NEW: Backend-calculated aggregated analytics (using 30d for consistency)
   const { data: alertsSummary, refetch: refetchAlertsSummary } = useAlertsSummary('last_30_days');
   const { data: safetyScoreData, refetch: refetchSafetyScore } = useSafetyScore('last_30_days');
@@ -198,18 +198,19 @@ export function Analytics() {
 
   const StatCard = ({ title, value, change, icon: Icon, trend, }) => {
     return (<Card className="p-6">
-    <div className="flex items-center justify-between mb-4">
-      <div className={`p-3 rounded-lg ${trend === "up" ? "bg-green-100 dark:bg-green-900/20" : "bg-red-100 dark:bg-red-900/20"}`}>
-        <Icon className={`w-5 h-5 ${trend === "up" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`} />
+      <div className="flex items-center justify-between mb-4">
+        <div className={`p-3 rounded-lg ${trend === "up" ? "bg-green-100 dark:bg-green-900/20" : "bg-red-100 dark:bg-red-900/20"}`}>
+          <Icon className={`w-5 h-5 ${trend === "up" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`} />
+        </div>
+        <Badge className={trend === "up" ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400"}>
+          {change}
+          {trend === "up" ? <TrendingUp className="w-3 h-3 ml-1 inline" /> : <TrendingDown className="w-3 h-3 ml-1 inline" />}
+        </Badge>
       </div>
-      <Badge className={trend === "up" ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400"}>
-        {change}
-        {trend === "up" ? <TrendingUp className="w-3 h-3 ml-1 inline" /> : <TrendingDown className="w-3 h-3 ml-1 inline" />}
-      </Badge>
-    </div>
-    <p className="text-muted-foreground mb-1">{title}</p>
-    <p className="text-foreground text-3xl">{value}</p>
-  </Card>)};
+      <p className="text-muted-foreground mb-1">{title}</p>
+      <p className="text-foreground text-3xl">{value}</p>
+    </Card>)
+  };
   return (<div className="space-y-6 p-6">
     {/* Header */}
     <div>
@@ -488,16 +489,17 @@ export function Analytics() {
 
         {/* Demand Forecast - Dynamic from /analytics/demand/forecast */}
         <Card className="p-6">
-          <h3 className="text-foreground mb-6">Next 12-Hour Demand Prediction</h3>
-          <ResponsiveContainer width="100%" height={300}>
+          <h3 className="text-foreground mb-2">24-Hour Demand Overview</h3>
+          <p className="text-muted-foreground text-sm mb-4">Past 12 hours (actual) → Now ★ → Next 12 hours (predicted)</p>
+          <ResponsiveContainer width="100%" height={320}>
             <LineChart data={demandForecastData}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="hour" />
+              <XAxis dataKey="hour" tick={{ fontSize: 10 }} interval={1} angle={-35} textAnchor="end" height={50} />
               <YAxis />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="actual" stroke="#3b82f6" strokeWidth={3} name="Actual Demand" />
-              <Line type="monotone" dataKey="predicted" stroke="#a855f7" strokeWidth={3} strokeDasharray="5 5" name="Predicted Demand" />
+              <Line type="monotone" dataKey="actual" stroke="#3b82f6" strokeWidth={2} name="Actual Demand" connectNulls={false} dot={{ r: 2 }} />
+              <Line type="monotone" dataKey="predicted" stroke="#a855f7" strokeWidth={2} strokeDasharray="5 5" name="Predicted Demand" dot={{ r: 2 }} />
             </LineChart>
           </ResponsiveContainer>
         </Card>

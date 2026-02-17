@@ -6,8 +6,8 @@ import numpy as np
 
 from app.models.zone import Zone, DemandForecast, DemandPattern
 from app.models.order import Order
-from app.ml.feature_engineering import FeatureEngineer
-from app.ml.demand_models import DemandForecaster, TimeSeriesForecaster
+from ml.feature_engineering import FeatureEngineer
+from ml.demand_models import DemandForecaster, TimeSeriesForecaster
 
 class ForecastingService:
     def __init__(self, db: Session):
@@ -107,6 +107,10 @@ class ForecastingService:
         current_time = datetime.utcnow()
         
         for zid in zones:
+            # Load zone-specific models
+            zone_model_path = f'ml/models/zone_{zid}'
+            self.ml_forecaster.load_models(zone_model_path)
+
             for minutes_ahead in [15, 30, 60]:
                 if minutes_ahead > horizon_minutes:
                     break
@@ -120,6 +124,7 @@ class ForecastingService:
                         features_df[col] = 0
                 
                 features_df = features_df[self.ml_forecaster.feature_columns]
+
                 
                 if method == "ensemble":
                     ml_pred, ml_conf = self.ml_forecaster.predict_ensemble(features_df)
@@ -137,7 +142,7 @@ class ForecastingService:
                     confidence = 0.75
                     model_used = "ts_ensemble"
                 
-                demand_score = min(1.0, final_pred / 50.0)
+                demand_score = min(1.0, final_pred / 2.0)
 
                 if demand_score >= 0.9:
                     alert_level = "critical"
@@ -194,7 +199,7 @@ class ForecastingService:
 
         blended_demand = (predicted_demand * 0.4) + (recent_orders * 4 * 0.6)
 
-        zone.demand_score = min(1.0, blended_demand / 50.0)
+        zone.demand_score = min(1.0, blended_demand / 2.0)
         zone.pending_orders = pending
 
         self.db.commit()
