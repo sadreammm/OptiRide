@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, } from "recharts";
-import { TrendingUp, TrendingDown, Package, Clock, Users, MapPin, AlertTriangle, Activity, Zap, Brain, CloudRain, Target, } from "lucide-react";
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
+import { TrendingUp, TrendingDown, Package, Clock, Users, MapPin, AlertTriangle, Activity, Zap, Brain, CloudRain, Target, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 import {
   useDriversSummary,
   useDashboardOverview,
@@ -13,10 +14,31 @@ import {
   useAlertsSummary,
   useSafetyScore,
   useTopPerformers,
-  useDemandForecast
+  useDemandForecast,
+  useDemandHistory,
+  useZoneDemandHistory
 } from "@/utils/hooks/use-api";
 
+// Helper: format date to YYYY-MM-DD
+const formatDateStr = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+// Get today in Dubai time (UTC+4)
+const getTodayDubai = () => {
+  const now = new Date();
+  const dubaiOffset = 4 * 60; // minutes
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utc + dubaiOffset * 60000);
+};
+
 export function Analytics() {
+  // Date navigation state for demand chart
+  const [selectedDate, setSelectedDate] = useState(null); // null = today
+  const [selectedZone, setSelectedZone] = useState(null); // null = show all zones grid
   // API Data - Dynamic from analytics service
   const { data: driversSummary, refetch: refetchDrivers } = useDriversSummary();
   const { data: dashboardOverview, refetch: refetchOverview } = useDashboardOverview('last_30_days');
@@ -29,6 +51,8 @@ export function Analytics() {
   const { data: safetyScoreData, refetch: refetchSafetyScore } = useSafetyScore('last_30_days');
   const { data: topPerformers, refetch: refetchTopPerformers } = useTopPerformers('last_30_days', 5);
   const { data: demandForecast, refetch: refetchDemandForecast } = useDemandForecast(12);
+  const { data: demandHistory, refetch: refetchDemandHistory } = useDemandHistory(selectedDate);
+  const { data: zoneDemandHistory, refetch: refetchZoneDemandHistory } = useZoneDemandHistory(selectedDate);
 
   // Auto-refresh data every 10 seconds
   usePolling(() => {
@@ -41,7 +65,39 @@ export function Analytics() {
     refetchSafetyScore();
     refetchTopPerformers();
     refetchDemandForecast();
+    refetchDemandHistory();
+    refetchZoneDemandHistory();
   }, 10000);
+
+  // Date navigation helpers
+  const goToPreviousDay = () => {
+    const today = getTodayDubai();
+    const current = selectedDate ? new Date(selectedDate + 'T00:00:00') : today;
+    const prev = new Date(current);
+    prev.setDate(prev.getDate() - 1);
+    // Don't go more than 30 days back
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    if (prev >= thirtyDaysAgo) {
+      setSelectedDate(formatDateStr(prev));
+    }
+  };
+
+  const goToNextDay = () => {
+    if (!selectedDate) return; // already at today
+    const current = new Date(selectedDate + 'T00:00:00');
+    const next = new Date(current);
+    next.setDate(next.getDate() + 1);
+    const today = getTodayDubai();
+    if (formatDateStr(next) >= formatDateStr(today)) {
+      setSelectedDate(null); // back to today
+    } else {
+      setSelectedDate(formatDateStr(next));
+    }
+  };
+
+  const goToToday = () => setSelectedDate(null);
+  const isToday = selectedDate === null || selectedDate === formatDateStr(getTodayDubai());
 
   // ============================================
   // DYNAMIC DATA - From Analytics Service
@@ -168,22 +224,11 @@ export function Analytics() {
       { name: "J. Francis", score: 88, orders: 125 },
     ];
 
-  // Demand Forecast - Now from backend
-  const demandForecastData = demandForecast?.forecasts?.length > 0
-    ? demandForecast.forecasts.map(point => ({
-      hour: point.hour,
-      actual: point.actual,
-      predicted: point.predicted
-    }))
-    : [
-      { hour: "Now", actual: totalOrders || 145, predicted: totalOrders || 145 },
-      { hour: "+2h", actual: null, predicted: 168 },
-      { hour: "+4h", actual: null, predicted: 198 },
-      { hour: "+6h", actual: null, predicted: 225 },
-      { hour: "+8h", actual: null, predicted: 185 },
-      { hour: "+10h", actual: null, predicted: 152 },
-      { hour: "+12h", actual: null, predicted: 128 },
-    ];
+  // Demand history data (24h for selected date)
+  const demandChartData = demandHistory?.data || [];
+  const demandDateLabel = demandHistory?.date_label || 'Today';
+  const currentHourIndex = demandHistory?.current_hour;
+  const isDemandToday = demandHistory?.is_today ?? true;
 
   // Helper to format change percentages - cap extreme values for display
   const formatChange = (val) => {
@@ -487,21 +532,174 @@ export function Analytics() {
           </div>
         </Card>
 
-        {/* Demand Forecast - Dynamic from /analytics/demand/forecast */}
+        {/* Demand Chart - Actual vs Predicted with Day Navigation */}
         <Card className="p-6">
-          <h3 className="text-foreground mb-2">24-Hour Demand Overview</h3>
-          <p className="text-muted-foreground text-sm mb-4">Past 12 hours (actual) → Now ★ → Next 12 hours (predicted)</p>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-foreground">Demand — Actual vs Predicted</h3>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={goToPreviousDay}
+                className="p-2 rounded-lg bg-muted hover:bg-muted-foreground/10 transition-colors"
+                title="Previous day"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={goToToday}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${isToday
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-muted hover:bg-muted-foreground/10 text-foreground'
+                  }`}
+              >
+                <Calendar className="w-4 h-4 inline mr-1" />
+                {demandDateLabel}
+              </button>
+              <button
+                onClick={goToNextDay}
+                disabled={isToday}
+                className={`p-2 rounded-lg transition-colors ${isToday
+                  ? 'bg-muted text-muted-foreground/30 cursor-not-allowed'
+                  : 'bg-muted hover:bg-muted-foreground/10'
+                  }`}
+                title="Next day"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
           <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={demandForecastData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="hour" tick={{ fontSize: 10 }} interval={1} angle={-35} textAnchor="end" height={50} />
-              <YAxis />
-              <Tooltip />
+            <LineChart data={demandChartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb40" />
+              <XAxis
+                dataKey="hour"
+                tick={{ fontSize: 12 }}
+                interval={1}
+              />
+              <YAxis allowDecimals={false} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '10px 14px' }}
+                labelStyle={{ fontWeight: 'bold', marginBottom: 4, color: '#1e293b' }}
+                itemStyle={{ color: '#334155' }}
+                wrapperStyle={{ zIndex: 50 }}
+              />
               <Legend />
-              <Line type="monotone" dataKey="actual" stroke="#3b82f6" strokeWidth={2} name="Actual Demand" connectNulls={false} dot={{ r: 2 }} />
-              <Line type="monotone" dataKey="predicted" stroke="#a855f7" strokeWidth={2} strokeDasharray="5 5" name="Predicted Demand" dot={{ r: 2 }} />
+              {isDemandToday && currentHourIndex !== null && currentHourIndex !== undefined && (
+                <ReferenceLine
+                  x={`${String(currentHourIndex).padStart(2, '0')}:00`}
+                  stroke="#6366f1"
+                  strokeDasharray="3 3"
+                  label={{ value: 'Now', position: 'top', fill: '#6366f1', fontSize: 12 }}
+                />
+              )}
+              <Line
+                type="monotone"
+                dataKey="actual"
+                stroke="#3b82f6"
+                strokeWidth={3}
+                name="Actual Demand"
+                dot={{ r: 3, fill: '#3b82f6' }}
+                connectNulls={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="predicted"
+                stroke="#a855f7"
+                strokeWidth={2}
+                strokeDasharray="5 5"
+                name="Predicted Demand"
+                dot={false}
+              />
             </LineChart>
           </ResponsiveContainer>
+          {isDemandToday && (
+            <p className="text-muted-foreground text-xs mt-2 text-center">
+              Actual demand line ends at current hour. Predicted demand shown for all 24 hours.
+            </p>
+          )}
+        </Card>
+
+        {/* Zone-wise Demand Chart — ML-Predicted */}
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-foreground">Zone-wise Demand — ML Predicted</h3>
+            <select
+              value={selectedZone || ''}
+              onChange={(e) => setSelectedZone(e.target.value || null)}
+              className="bg-muted text-foreground text-sm rounded-lg px-3 py-1.5 border border-border focus:outline-none"
+            >
+              <option value="">All Zones</option>
+              {(zoneDemandHistory?.zones || []).map(zone => (
+                <option key={zone.zone_id} value={zone.zone_id}>{zone.zone_name}</option>
+              ))}
+            </select>
+          </div>
+          {selectedZone ? (
+            // Single zone view
+            (() => {
+              const zone = (zoneDemandHistory?.zones || []).find(z => z.zone_id === selectedZone);
+              if (!zone) return <p className="text-muted-foreground text-sm">No data for selected zone.</p>;
+              return (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-medium text-foreground">{zone.zone_name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Actual: {zone.total_actual} | Predicted: {zone.total_predicted}
+                    </p>
+                  </div>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={zone.data}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb40" />
+                      <XAxis dataKey="hour" tick={{ fontSize: 11 }} interval={2} />
+                      <YAxis allowDecimals={false} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '10px 14px' }}
+                        labelStyle={{ fontWeight: 'bold', color: '#1e293b' }}
+                        itemStyle={{ color: '#334155' }}
+                        wrapperStyle={{ zIndex: 50 }}
+                      />
+                      <Legend />
+                      {isDemandToday && currentHourIndex !== null && (
+                        <ReferenceLine
+                          x={`${String(currentHourIndex).padStart(2, '0')}:00`}
+                          stroke="#6366f1" strokeDasharray="3 3"
+                          label={{ value: 'Now', position: 'top', fill: '#6366f1', fontSize: 11 }}
+                        />
+                      )}
+                      <Line type="monotone" dataKey="actual" stroke="#3b82f6" strokeWidth={2} name="Actual" dot={{ r: 2 }} connectNulls={false} />
+                      <Line type="monotone" dataKey="predicted" stroke="#a855f7" strokeWidth={2} strokeDasharray="5 5" name="Predicted" dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              );
+            })()
+          ) : (
+            // Grid of all zones
+            <div className="grid grid-cols-2 gap-4 max-h-[600px] overflow-y-auto pr-2">
+              {(zoneDemandHistory?.zones || []).map(zone => (
+                <div key={zone.zone_id} className="bg-muted/30 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-sm font-medium text-foreground">{zone.zone_name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      A:{zone.total_actual} P:{Math.round(zone.total_predicted)}
+                    </p>
+                  </div>
+                  <ResponsiveContainer width="100%" height={160}>
+                    <LineChart data={zone.data}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb20" />
+                      <XAxis dataKey="hour" tick={{ fontSize: 9 }} interval={5} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 9 }} width={25} />
+                      <Tooltip contentStyle={{ fontSize: 11, backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '8px 10px' }} itemStyle={{ color: '#334155' }} wrapperStyle={{ zIndex: 50 }} />
+                      <Line type="monotone" dataKey="actual" stroke="#3b82f6" strokeWidth={1.5} dot={false} connectNulls={false} />
+                      <Line type="monotone" dataKey="predicted" stroke="#a855f7" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-muted-foreground text-xs mt-2 text-center">
+            All predictions powered by ML ensemble (RandomForest + GradientBoosting + Ridge) per zone.
+          </p>
         </Card>
 
         {/* Risk Predictions - Hardcoded (Requires AI risk prediction model) */}

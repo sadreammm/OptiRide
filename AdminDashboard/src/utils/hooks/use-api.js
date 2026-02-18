@@ -570,6 +570,64 @@ export const useDemandForecast = (hours = 12) => {
     return { data, loading, error, refetch: fetchDemandForecast };
 };
 
+/**
+ * Hook for fetching demand history for a specific date
+ * @param {string|null} date - YYYY-MM-DD format, null for today
+ */
+export const useDemandHistory = (date = null) => {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const fetchDemandHistory = useCallback(async () => {
+        try {
+            setLoading(true);
+            const result = await analyticsService.getDemandHistory(date);
+            setData(result);
+            setError(null);
+        } catch (err) {
+            setError(err);
+        } finally {
+            setLoading(false);
+        }
+    }, [date]);
+
+    useEffect(() => {
+        fetchDemandHistory();
+    }, [fetchDemandHistory]);
+
+    return { data, loading, error, refetch: fetchDemandHistory };
+};
+
+/**
+ * Hook for fetching zone-wise demand history for a specific date
+ * @param {string|null} date - YYYY-MM-DD format, null for today
+ */
+export const useZoneDemandHistory = (date = null) => {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const fetchZoneDemandHistory = useCallback(async () => {
+        try {
+            setLoading(true);
+            const result = await analyticsService.getZoneDemandHistory(date);
+            setData(result);
+            setError(null);
+        } catch (err) {
+            setError(err);
+        } finally {
+            setLoading(false);
+        }
+    }, [date]);
+
+    useEffect(() => {
+        fetchZoneDemandHistory();
+    }, [fetchZoneDemandHistory]);
+
+    return { data, loading, error, refetch: fetchZoneDemandHistory };
+};
+
 // Custom hook for periodic data refresh
 export const usePolling = (callback, interval = 5000) => {
     useEffect(() => {

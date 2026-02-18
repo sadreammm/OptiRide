@@ -72,13 +72,21 @@ class FeatureEngineer:
     def _create_time_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
 
-        df['hour'] = df.index.hour
-        df['day_of_week'] = df.index.dayofweek
-        df['day_of_month'] = df.index.day
-        df['week_of_year'] = df.index.isocalendar().week
-        df['month'] = df.index.month
-        df['quarter'] = df.index.quarter
-        df['year'] = df.index.year
+        # Convert UTC timestamps to Dubai Local Time (+4)
+        # We assume index is UTC if naive (from DB)
+        # Using a fixed offset is safer than relying on system timezone
+        df['local_time'] = df.index + timedelta(hours=4)
+
+        df['hour'] = df['local_time'].dt.hour
+        df['day_of_week'] = df['local_time'].dt.dayofweek
+        df['day_of_month'] = df['local_time'].dt.day
+        df['week_of_year'] = df['local_time'].dt.isocalendar().week
+        df['month'] = df['local_time'].dt.month
+        df['quarter'] = df['local_time'].dt.quarter
+        df['year'] = df['local_time'].dt.year
+        
+        # Drop temporary column
+        df.drop(columns=['local_time'], inplace=True)
         
         df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
 
@@ -171,23 +179,27 @@ class FeatureEngineer:
         features = {}
 
         # --- Time features (must match _create_time_features) ---
-        features['hour'] = forecast_time.hour
-        features['day_of_week'] = forecast_time.weekday()
-        features['day_of_month'] = forecast_time.day
-        features['week_of_year'] = forecast_time.isocalendar()[1]
-        features['month'] = forecast_time.month
-        features['quarter'] = (forecast_time.month - 1) // 3 + 1
-        features['year'] = forecast_time.year
+        # Convert UTC forecast_time to Dubai Local Time (+4)
+        local_time = forecast_time + timedelta(hours=4)
 
-        features['is_weekend'] = 1 if forecast_time.weekday() >= 5 else 0
+        features['hour'] = local_time.hour
+        features['day_of_week'] = local_time.weekday()
+        features['day_of_month'] = local_time.day
+        features['week_of_year'] = local_time.isocalendar()[1]
+        features['month'] = local_time.month
+        features['quarter'] = (local_time.month - 1) // 3 + 1
+        features['year'] = local_time.year
+
+        features['is_weekend'] = 1 if local_time.weekday() >= 5 else 0
         # Use < (exclusive upper bound) to match training's & operator
-        features['is_breakfast'] = 1 if 7 <= forecast_time.hour < 11 else 0
-        features['is_lunch'] = 1 if 12 <= forecast_time.hour < 15 else 0
-        features['is_dinner'] = 1 if 18 <= forecast_time.hour < 21 else 0
-        features['is_late_night'] = 1 if forecast_time.hour >= 22 or forecast_time.hour < 3 else 0
-        features['is_workday'] = 1 if forecast_time.weekday() < 5 else 0
+        features['is_breakfast'] = 1 if 7 <= local_time.hour < 11 else 0
+        features['is_lunch'] = 1 if 12 <= local_time.hour < 15 else 0
+        features['is_dinner'] = 1 if 18 <= local_time.hour < 21 else 0
+        features['is_late_night'] = 1 if local_time.hour >= 22 or local_time.hour < 3 else 0
+        features['is_workday'] = 1 if local_time.weekday() < 5 else 0
 
         # --- Cyclical features (must match _create_cyclical_features) ---
+        # Use local_time features for cyclical encoding
         features['hour_sin'] = np.sin(2 * np.pi * features['hour'] / 24)
         features['hour_cos'] = np.cos(2 * np.pi * features['hour'] / 24)
         features['dow_sin'] = np.sin(2 * np.pi * features['day_of_week'] / 7)
@@ -245,27 +257,67 @@ class FeatureEngineer:
         return lags
 
     def _get_rolling_demand(self, zone_id: str, current_time: datetime) -> Dict[str, Any]:
-        """Approximate rolling window features by querying recent order counts."""
+        """Calculate accurate rolling features by fetching recent hourly counts."""
         rolling = {}
-
-        for window in [3, 6, 12, 24]:
-            window_start = current_time - timedelta(hours=window)
+        
+        # We need up to 24 hours of history
+        max_window = 24
+        window_start = current_time - timedelta(hours=max_window)
+        
+        # Query hourly counts for the last 24 hours
+        # Group by hour to get the series of demand values
+        hourly_counts = self.db.query(
+            func.date_trunc('hour', Order.created_at).label('hour'),
+            func.count(Order.order_id).label('count')
+        ).filter(
+            Order.pickup_zone == zone_id,
+            Order.created_at >= window_start,
+            Order.created_at < current_time
+        ).group_by('hour').all()
+        
+        # Convert to a dictionary {timestamp: count}
+        # Note: timestamps from DB might be naive or aware, we'll normalize matches by time difference
+        history_map = {row[0]: row[1] for row in hourly_counts}
+        
+        # Reconstruct the hourly series for the last 24h (filling missing hours with 0)
+        series = []
+        for i in range(1, max_window + 1):
+            # i=1 is 1 hour ago
+            check_time = current_time - timedelta(hours=i)
+            # Round check_time down to hour to match date_trunc
+            check_hour = check_time.replace(minute=0, second=0, microsecond=0)
             
-            orders_in_window = self.db.query(Order).filter(
-                Order.pickup_zone == zone_id,
-                Order.created_at >= window_start,
-                Order.created_at <= current_time
-            ).count()
-
-            avg = orders_in_window / window if window > 0 else 0.0
-            rolling[f'demand_rolling_mean_{window}'] = avg
-            rolling[f'demand_rolling_std_{window}'] = 0.0  # Cannot compute std from a single aggregate
-            rolling[f'demand_rolling_min_{window}'] = 0.0
-            rolling[f'demand_rolling_max_{window}'] = float(orders_in_window)
+            # Find matching count (handle potential timezone offset if DB returns naive)
+            # Since we controlled the query range, exact match on hour part should work 
+            # if we are consistent. To be safe, we look for the count 
+            val = history_map.get(check_hour, 0)
+            series.insert(0, val) # Insert at beginning to keep chronological order (oldest first)
+            
+        # series is now a list of 24 ints [count_24h_ago, ..., count_1h_ago]
+        series_arr = np.array(series)
+        
+        for window in [3, 6, 12, 24]:
+            # Slice the last 'window' elements
+            if window > len(series_arr):
+                sub_series = series_arr
+            else:
+                sub_series = series_arr[-window:]
+                
+            if len(sub_series) > 0:
+                rolling[f'demand_rolling_mean_{window}'] = float(np.mean(sub_series))
+                rolling[f'demand_rolling_std_{window}'] = float(np.std(sub_series))
+                rolling[f'demand_rolling_min_{window}'] = float(np.min(sub_series))
+                rolling[f'demand_rolling_max_{window}'] = float(np.max(sub_series))
+            else:
+                rolling[f'demand_rolling_mean_{window}'] = 0.0
+                rolling[f'demand_rolling_std_{window}'] = 0.0
+                rolling[f'demand_rolling_min_{window}'] = 0.0
+                rolling[f'demand_rolling_max_{window}'] = 0.0
 
         # demand_cv approximation
         mean_24 = rolling.get('demand_rolling_mean_24', 0.0)
-        rolling['demand_cv'] = 0.0  # std / (mean + 1) — with std=0 this is 0
+        std_24 = rolling.get('demand_rolling_std_24', 0.0)
+        rolling['demand_cv'] = std_24 / (mean_24 + 1)
 
         return rolling
 

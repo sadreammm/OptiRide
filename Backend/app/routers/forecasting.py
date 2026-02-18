@@ -26,6 +26,10 @@ def train_zone_models(
 
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+    
+    # Clear analytics cache so new models are loaded for predictions
+    from app.services.analytics_service import AnalyticsService
+    AnalyticsService.clear_model_cache()
 
     return result
 
@@ -48,8 +52,13 @@ def train_all_zones(
     for zone in zones:
         result = service.train_zone_models(zone_id=zone.zone_id, days_history=days_history)
         results.append(result)
-
+    
+    # Clear cache if any training succeeded
     trained = [r for r in results if r.get("status") == "trained"]
+    if trained:
+        from app.services.analytics_service import AnalyticsService
+        AnalyticsService.clear_model_cache()
+
     failed = [r for r in results if "error" in r]
 
     return {

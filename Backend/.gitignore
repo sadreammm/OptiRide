@@ -9,4 +9,5 @@ serviceAccount.json
 .coverage
 htmlcov/
 
-.scripts/
+scripts/
+ml/models/

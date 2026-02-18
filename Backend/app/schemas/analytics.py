@@ -302,3 +302,21 @@ class DemandForecastResponse(BaseModel):
     peak_predicted_demand: float
     forecasts: List[DemandForecastPoint]
     recommendations: List[str]
+
+
+class DemandHistoryPoint(BaseModel):
+    """Single hourly data point for demand history"""
+    hour: str  # "00:00", "01:00", ..., "23:00" in local time
+    actual: Optional[int] = None
+    predicted: Optional[float] = None
+
+
+class DemandHistoryResponse(BaseModel):
+    """Hourly demand data for a specific date"""
+    date: str  # "2026-02-18"
+    date_label: str  # "Feb 18, 2026"
+    is_today: bool
+    current_hour: Optional[int] = None  # only set for today, local hour (0-23)
+    data: List[DemandHistoryPoint]
+    total_actual: int
+    total_predicted: float

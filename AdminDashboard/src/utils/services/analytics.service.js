@@ -152,5 +152,35 @@ export const analyticsService = {
         } catch (error) {
             throw handleApiError(error);
         }
+    },
+
+    /**
+     * Get hourly actual vs predicted demand for a specific date
+     * @param {string|null} date - Target date in YYYY-MM-DD format, null for today
+     */
+    async getDemandHistory(date = null) {
+        try {
+            const params = {};
+            if (date) params.date = date;
+            const response = await apiClient.get('/analytics/demand/history', { params });
+            return response.data;
+        } catch (error) {
+            throw handleApiError(error);
+        }
+    },
+
+    /**
+     * Get hourly actual vs predicted demand per zone for a specific date
+     * @param {string|null} date - Target date in YYYY-MM-DD format, null for today
+     */
+    async getZoneDemandHistory(date = null) {
+        try {
+            const params = {};
+            if (date) params.date = date;
+            const response = await apiClient.get('/analytics/demand/zones', { params });
+            return response.data;
+        } catch (error) {
+            throw handleApiError(error);
+        }
     }
 };

@@ -28,9 +28,7 @@ class DemandForecaster:
 
         self.feature_columns = X.columns.tolist()
 
-        # Use shuffled split — chronological split unfairly penalizes models
-        # when demand patterns repeat weekly (model trains on old weeks, tests on recent ones
-        # which have same patterns but different random noise)
+        # Use shuffled split
         from sklearn.model_selection import train_test_split
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, random_state=42, shuffle=True
@@ -98,11 +96,11 @@ class DemandForecaster:
             predictions.append(max(0, pred))
 
             if model_name == 'random_forest':
-                weights.append(0.4)
+                weights.append(0.5)
             elif model_name == 'gradient_boosting':
                 weights.append(0.4)
             else:
-                weights.append(0.2)
+                weights.append(0.1)
 
         if use_weights:
             final_pred = np.average(predictions, weights=weights)
@@ -112,6 +110,54 @@ class DemandForecaster:
         confidence = 1.0 - min(0.5, np.std(predictions) / (final_pred + 1))
 
         return round(final_pred, 2), round(confidence, 2)
+
+    def predict_ensemble_batch(
+        self,
+        features: pd.DataFrame,
+        use_weights: bool = True
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Vectorized batch prediction for multiple rows at once.
+        Returns (predictions_array, confidences_array) with one value per row.
+        """
+        if not self.models:
+            n = len(features)
+            return np.zeros(n), np.zeros(n)
+
+        n = len(features)
+        all_preds = []  # list of arrays, one per model
+        weights = []
+
+        for model_name, model in self.models.items():
+            if model_name == 'ridge':
+                X_scaled = self.scalers['ridge'].transform(features)
+                preds = model.predict(X_scaled)
+            else:
+                preds = model.predict(features)
+            preds = np.maximum(0, preds)
+            all_preds.append(preds)
+
+            if model_name == 'random_forest':
+                weights.append(0.5)
+            elif model_name == 'gradient_boosting':
+                weights.append(0.4)
+            else:
+                weights.append(0.1)
+
+        # Stack: shape (n_models, n_rows) -> weighted average along axis 0
+        preds_matrix = np.array(all_preds)  # (n_models, n_rows)
+        weights_arr = np.array(weights)
+
+        if use_weights and len(weights) == len(all_preds):
+            final_preds = np.average(preds_matrix, axis=0, weights=weights_arr)
+        else:
+            final_preds = np.mean(preds_matrix, axis=0)
+
+        # Confidence per row
+        stds = np.std(preds_matrix, axis=0)
+        confidences = 1.0 - np.minimum(0.5, stds / (final_preds + 1))
+
+        return np.round(final_preds, 2), np.round(confidences, 2)
     
     def save_models(self, path: str = 'ml/models'):
         import os

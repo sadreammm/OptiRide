@@ -11,7 +11,8 @@ from app.schemas.analytics import (
     DashboardOverview, RealtimeMetrics, ZoneHeatmap,
     TrendData, ReportRequest, ReportResponse, PerformanceAnalysis,
     MetricPeriod, ForecastResponse, AlertsSummaryResponse,
-    SafetyScoreResponse, TopPerformersResponse, DemandForecastResponse
+    SafetyScoreResponse, TopPerformersResponse, DemandForecastResponse,
+    DemandHistoryResponse
 )
 
 router = APIRouter()
@@ -203,3 +204,33 @@ def get_demand_forecast(
     """
     analytics_service = AnalyticsService(db)
     return analytics_service.get_demand_forecast(hours=hours)
+
+
+@router.get("/demand/history")
+def get_demand_history(
+    date: Optional[str] = Query(None, description="Target date in YYYY-MM-DD format, defaults to today"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Get hourly actual vs predicted demand for a specific date.
+    For today: actual demand line stops at the current hour.
+    For past days: actual demand shown for all 24 hours.
+    Use date navigation to go back up to 30 days.
+    """
+    analytics_service = AnalyticsService(db)
+    return analytics_service.get_demand_history(target_date=date)
+
+
+@router.get("/demand/zones")
+def get_zone_demand_history(
+    date: Optional[str] = Query(None, description="Target date in YYYY-MM-DD format, defaults to today"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Get hourly actual vs ML-predicted demand per zone for a specific date.
+    Returns separate data for each zone to render zone-level demand charts.
+    """
+    analytics_service = AnalyticsService(db)
+    return analytics_service.get_zone_demand_history(target_date=date)

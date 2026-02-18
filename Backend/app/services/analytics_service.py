@@ -2,6 +2,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, case, extract, text
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
+import os
+import pandas as pd
 
 from app.models.analytics import DailyMetrics, ZoneMetrics, PerformanceReport, Demand
 from app.models.order import Order
@@ -819,133 +821,379 @@ class AnalyticsService:
             ]
         )
 
+    # ========================================
+    # ML-POWERED DEMAND PREDICTION (OPTIMIZED)
+    # ========================================
+    #
+    # Performance: pre-fetches ALL demand data in 1 SQL query, computes
+    # features in-memory, and caches loaded models. Reduces ~2,880 DB
+    # queries to 1-2 per endpoint call.
+
+    # Class-level cache for loaded ML models (shared across requests)
+    _ml_models_cache = {}   # {zone_id: DemandForecaster or None}
+    _zones_cache = None
+    _zones_cache_time = None
+
+    @classmethod
+    def _get_base_model_dir(cls):
+        """Get absolute path to ml/models directory."""
+        this_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(this_dir, '..', '..', 'ml', 'models')
+
+    @staticmethod
+    def clear_model_cache():
+        """Clear the ML model cache to force reload from disk."""
+        AnalyticsService._ml_models_cache = {}
+
+    def _get_forecaster(self, zone_id: str):
+        """Load and cache DemandForecaster for a zone."""
+        if zone_id in AnalyticsService._ml_models_cache:
+            return AnalyticsService._ml_models_cache[zone_id]
+
+        try:
+            from ml.demand_models import DemandForecaster
+            forecaster = DemandForecaster()
+            model_dir = os.path.normpath(os.path.join(
+                self._get_base_model_dir(), f'zone_{zone_id}'
+            ))
+            if not os.path.isdir(model_dir):
+                AnalyticsService._ml_models_cache[zone_id] = None
+                return None
+            forecaster.load_models(model_dir)
+            if not forecaster.models:
+                AnalyticsService._ml_models_cache[zone_id] = None
+                return None
+            AnalyticsService._ml_models_cache[zone_id] = forecaster
+            return forecaster
+        except Exception:
+            AnalyticsService._ml_models_cache[zone_id] = None
+            return None
+
+    def _get_all_zones(self) -> list:
+        """Get all zone IDs (cached for 60s)."""
+        now = datetime.utcnow()
+        if (AnalyticsService._zones_cache is not None and
+                AnalyticsService._zones_cache_time and
+                (now - AnalyticsService._zones_cache_time).seconds < 60):
+            return AnalyticsService._zones_cache
+        zones = [z[0] for z in self.db.query(Zone.zone_id).all()]
+        AnalyticsService._zones_cache = zones
+        AnalyticsService._zones_cache_time = now
+        return zones
+
+    def _prefetch_demand_data(self, zones: list, start_utc: datetime, end_utc: datetime) -> dict:
+        """
+        Pre-fetch ALL order counts by (zone, hour_bucket) in ONE query.
+        Returns: {zone_id: {hour_bucket_datetime: count}}
+        """
+        import numpy as np
+        results = self.db.query(
+            Order.pickup_zone,
+            func.date_trunc('hour', Order.created_at).label('hour_bucket'),
+            func.count(Order.order_id).label('cnt')
+        ).filter(
+            Order.pickup_zone.in_(zones),
+            Order.created_at >= start_utc,
+            Order.created_at < end_utc
+        ).group_by(
+            Order.pickup_zone,
+            func.date_trunc('hour', Order.created_at)
+        ).all()
+
+        data = {}
+        for zone_id, hour_bucket, cnt in results:
+            if zone_id not in data:
+                data[zone_id] = {}
+            data[zone_id][hour_bucket] = cnt
+        return data
+
+    def _build_features_fast(self, forecast_time: datetime, zone_demand: dict) -> dict:
+        """
+        Build ML features entirely in-memory (no DB queries).
+        zone_demand: {hour_bucket_datetime: count} for one specific zone.
+        """
+        import numpy as np
+        f = {}
+
+        # Time features
+        # Convert UTC forecast_time to Dubai Local Time (+4)
+        local_time = forecast_time + timedelta(hours=4)
+
+        f['hour'] = local_time.hour
+        f['day_of_week'] = local_time.weekday()
+        f['day_of_month'] = local_time.day
+        f['week_of_year'] = local_time.isocalendar()[1]
+        f['month'] = local_time.month
+        f['quarter'] = (local_time.month - 1) // 3 + 1
+        f['year'] = local_time.year
+        f['is_weekend'] = 1 if local_time.weekday() >= 5 else 0
+        f['is_breakfast'] = 1 if 7 <= local_time.hour < 11 else 0
+        f['is_lunch'] = 1 if 12 <= local_time.hour < 15 else 0
+        f['is_dinner'] = 1 if 18 <= local_time.hour < 21 else 0
+        f['is_late_night'] = 1 if local_time.hour >= 22 or local_time.hour < 3 else 0
+        f['is_workday'] = 1 if local_time.weekday() < 5 else 0
+
+        # Cyclical features
+        f['hour_sin'] = np.sin(2 * np.pi * f['hour'] / 24)
+        f['hour_cos'] = np.cos(2 * np.pi * f['hour'] / 24)
+        f['dow_sin'] = np.sin(2 * np.pi * f['day_of_week'] / 7)
+        f['dow_cos'] = np.cos(2 * np.pi * f['day_of_week'] / 7)
+        f['dom_sin'] = np.sin(2 * np.pi * f['day_of_month'] / 30)
+        f['dom_cos'] = np.cos(2 * np.pi * f['day_of_month'] / 30)
+        f['woy_sin'] = np.sin(2 * np.pi * f['week_of_year'] / 52)
+        f['woy_cos'] = np.cos(2 * np.pi * f['week_of_year'] / 52)
+        f['month_sin'] = np.sin(2 * np.pi * f['month'] / 12)
+        f['month_cos'] = np.cos(2 * np.pi * f['month'] / 12)
+        f['quarter_sin'] = np.sin(2 * np.pi * f['quarter'] / 4)
+        f['quarter_cos'] = np.cos(2 * np.pi * f['quarter'] / 4)
+        f['year_sin'] = np.sin(2 * np.pi * f['year'] / 100)
+        f['year_cos'] = np.cos(2 * np.pi * f['year'] / 100)
+
+        # Lag features from pre-fetched data
+        ft_truncated = forecast_time.replace(minute=0, second=0, microsecond=0)
+        for lag in [1, 2, 3, 6, 12, 24, 48, 168]:
+            lag_time = ft_truncated - timedelta(hours=lag)
+            f[f'demand_lag_{lag}'] = float(zone_demand.get(lag_time, 0))
+
+        # Rolling features from pre-fetched data
+        for window in [3, 6, 12, 24]:
+            values = []
+            for h in range(1, window + 1):
+                t = ft_truncated - timedelta(hours=h)
+                values.append(zone_demand.get(t, 0))
+            f[f'demand_rolling_mean_{window}'] = float(np.mean(values)) if values else 0.0
+            f[f'demand_rolling_std_{window}'] = float(np.std(values)) if len(values) > 1 else 0.0
+            f[f'demand_rolling_min_{window}'] = float(min(values)) if values else 0.0
+            f[f'demand_rolling_max_{window}'] = float(max(values)) if values else 0.0
+
+        # cv = std / (mean + 1)
+        mean_24 = f.get('demand_rolling_mean_24', 0.0)
+        std_24 = f.get('demand_rolling_std_24', 0.0)
+        f['demand_cv'] = std_24 / (mean_24 + 1)
+
+        # Derived features
+        f['weekend_dinner'] = f['is_weekend'] * f['is_dinner']
+        f['workday_lunch'] = f['is_workday'] * f['is_lunch']
+        if 'demand_lag_1' in f and 'demand_lag_2' in f:
+            f['demand_momentum'] = f['demand_lag_1'] - f['demand_lag_2']
+
+        # Defaults for price/distance/duration columns
+        f['price'] = 0.0
+        f['distance_km'] = 0.0
+        f['duration_min'] = 0.0
+
+        return f
+
+    def _batch_predict_all_zones(
+        self, zones: list, forecast_times_utc: list, demand_data: dict
+    ) -> dict:
+        """
+        Run ML predictions for all zones × all forecast hours using BATCH inference.
+        Builds 1 DataFrame per zone (N rows = N forecast times), runs prediction once.
+        Returns: {zone_id: [(predicted, confidence), ...]}
+        """
+        import numpy as np
+        n = len(forecast_times_utc)
+        results = {}
+
+        for zone_id in zones:
+            forecaster = self._get_forecaster(zone_id)
+            if forecaster is None:
+                results[zone_id] = [(0.0, 0.0)] * n
+                continue
+
+            zone_demand = demand_data.get(zone_id, {})
+
+            try:
+                # Build all feature rows at once
+                feature_rows = [self._build_features_fast(ft, zone_demand) for ft in forecast_times_utc]
+                features_df = pd.DataFrame(feature_rows)
+
+                # Align columns
+                for col in forecaster.feature_columns:
+                    if col not in features_df.columns:
+                        features_df[col] = 0
+                features_df = features_df[forecaster.feature_columns]
+
+                # Single batch prediction (vectorized)
+                preds, confs = forecaster.predict_ensemble_batch(features_df)
+                results[zone_id] = [(max(0, float(p)), float(c)) for p, c in zip(preds, confs)]
+            except Exception:
+                results[zone_id] = [(0.0, 0.0)] * n
+
+        return results
+
+    def _compute_calibration_factor(
+        self, zone_preds: dict, actual_map: dict,
+        zones: list, local_now_hour: int, is_today: bool
+    ) -> float:
+        """
+        Compute scaling factor by comparing ML predictions to actual orders
+        for ALL completed hours with data (not just last 3).
+        Only calibrates if we're looking at today's data.
+        Returns factor clamped to [0.5, 4.0].
+        """
+        if not is_today or local_now_hour < 1:
+            return 1.0
+
+        total_actual = 0
+        total_predicted = 0.0
+        hours_with_data = 0
+
+        # Scan all completed hours that have actual orders
+        for h in range(0, local_now_hour):
+            actual = actual_map.get(h, 0)
+            if actual == 0:
+                continue
+            # Sum ML predictions for this hour across zones
+            predicted = sum(zone_preds.get(z, [(0, 0)] * 24)[h][0] for z in zones)
+            if predicted <= 0:
+                continue
+            total_actual += actual
+            total_predicted += predicted
+            hours_with_data += 1
+
+        if hours_with_data < 2 or total_predicted == 0:
+            return 1.0
+
+        factor = total_actual / total_predicted
+        return max(0.5, min(4.0, factor))
+
+    def _apply_calibration(
+        self, zone_preds: dict, factor: float
+    ) -> dict:
+        """Scale all predictions by the given calibration factor."""
+        if abs(factor - 1.0) < 0.01:
+            return zone_preds
+        calibrated = {}
+        for zone_id, preds in zone_preds.items():
+            calibrated[zone_id] = [
+                (round(p * factor, 2), c) for p, c in preds
+            ]
+        return calibrated
+
+    # ========================================
+    # DEMAND FORECAST (Next N hours)
+    # ========================================
+
     def get_demand_forecast(self, hours: int = 12) -> DemandForecastResponse:
         """
-        Get demand forecast showing past 12h actual + next N hours predicted.
-        All values are orders-per-hour. Times displayed in Dubai local (UTC+4).
+        Get demand forecast for the next N hours using ML models.
+        Uses batch prediction for fast response.
         """
         now = datetime.utcnow()
         current_hour = now.hour
-        DUBAI_OFFSET = 4  # UTC+4
-        
-        # ── Historical hourly averages (last 4 weeks, same weekday) ──
-        # PostgreSQL DOW: Sun=0, Mon=1 ... Sat=6
-        # Python weekday(): Mon=0, Tue=1 ... Sun=6
-        pg_dow = (now.weekday() + 1) % 7
-        
-        # Count how many distinct dates of this weekday exist in last 4 weeks
-        distinct_dates = self.db.query(
-            func.count(func.distinct(func.date(Order.created_at)))
-        ).filter(
-            extract('dow', Order.created_at) == pg_dow,
-            Order.created_at >= now - timedelta(weeks=4)
-        ).scalar() or 1
-        
-        historical_query = self.db.query(
-            extract('hour', Order.created_at).label('hour'),
-            func.count(Order.order_id).label('count')
-        ).filter(
-            extract('dow', Order.created_at) == pg_dow,
-            Order.created_at >= now - timedelta(weeks=4)
-        ).group_by(text('hour')).all()
-        
-        hour_avg = {int(row[0]): row[1] / max(1, distinct_dates) for row in historical_query}
-        
-        # ── Actual orders per hour for today only ──
-        past_hours = 12
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        actual_query = self.db.query(
-            extract('hour', Order.created_at).label('hour'),
-            func.count(Order.order_id).label('count')
-        ).filter(
-            Order.created_at >= today_start,
-            Order.created_at < now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        ).group_by(text('hour')).all()
-        
-        actual_by_hour = {int(row[0]): row[1] for row in actual_query}
-        
-        # ── Total active orders (for response metadata) ──
+        hour_start = now.replace(minute=0, second=0, microsecond=0)
+
+        # Current hour's actual orders
+        current_hour_orders = self.db.query(Order).filter(
+            Order.created_at >= hour_start,
+            Order.created_at < hour_start + timedelta(hours=1)
+        ).count()
+
         total_active_orders = self.db.query(Order).filter(
             Order.status.in_([OrderStatus.pending.value, OrderStatus.assigned.value, OrderStatus.picked_up.value])
         ).count()
-        
-        # ── Build chart data: past 12h (actual) + now + next N hours (predicted) ──
+
+        zones = self._get_all_zones()
+
+        # Build forecast times in UTC
+        forecast_times = [hour_start + timedelta(hours=i) for i in range(hours + 1)]
+
+        # Pre-fetch demand data for lag/rolling features (need up to 168h back)
+        data_start = hour_start - timedelta(hours=170)
+        data_end = hour_start + timedelta(hours=hours + 1)
+        demand_data = self._prefetch_demand_data(zones, data_start, data_end)
+
+        # Batch predict + calibrate
+        zone_preds = self._batch_predict_all_zones(zones, forecast_times, demand_data)
+
+        # Calibrate: fetch today's completed hours actuals for comparison
+        local_now_hour = (now.hour + 4) % 24
+        today_dubai = (now + timedelta(hours=4)).date()
+        today_start_utc = datetime(today_dubai.year, today_dubai.month, today_dubai.day, 0, 0, 0) - timedelta(hours=4)
+        today_end_utc = today_start_utc + timedelta(hours=24)
+        cal_actual = self.db.query(
+            extract('hour', Order.created_at + text("interval '4 hours'")).label('local_hour'),
+            func.count(Order.order_id).label('count')
+        ).filter(
+            Order.created_at >= today_start_utc,
+            Order.created_at < today_end_utc
+        ).group_by(text('local_hour')).all()
+        cal_map = {int(row[0]): row[1] for row in cal_actual}
+
+        # Build a mapping from forecast index to local hour for calibration
+        # We need zone_preds indexed by local_hour for the calibration function
+        # Remap zone_preds to local_hour indices for calibration
+        forecast_local_hours = [(ft.hour + 4) % 24 for ft in forecast_times]
+        zone_preds_by_local = {}
+        for z in zones:
+            preds_list = zone_preds.get(z, [(0, 0)] * len(forecast_times))
+            by_hour = [(0, 0)] * 24
+            for idx, lh in enumerate(forecast_local_hours):
+                if idx < len(preds_list):
+                    by_hour[lh] = preds_list[idx]
+            zone_preds_by_local[z] = by_hour
+
+        cal_factor = self._compute_calibration_factor(
+            zone_preds_by_local, cal_map, zones, local_now_hour, True
+        )
+        zone_preds = self._apply_calibration(zone_preds, cal_factor)
+
+        # Aggregate city-wide totals per hour
         forecasts = []
-        peak_hour_utc = current_hour
-        peak_demand = 0
-        
-        # Past hours: show actual data
-        for i in range(past_hours, 0, -1):
-            utc_hour = (current_hour - i) % 24
-            local_hour = (utc_hour + DUBAI_OFFSET) % 24
-            actual_count = actual_by_hour.get(utc_hour, 0)
-            hist_avg = hour_avg.get(utc_hour, 0)
-            
-            # If no actual data for this hour, use historical average
-            display_actual = actual_count if actual_count > 0 else hist_avg
-            
+        peak_hour = current_hour
+        peak_demand = 0.0
+
+        for i, ft in enumerate(forecast_times):
+            forecast_hour_utc = ft.hour
+            local_hour = (forecast_hour_utc + 4) % 24
+            hour_label = f"{local_hour:02d}:00"
+
+            # Sum predictions across zones
+            total_pred = sum(zone_preds.get(z, [(0, 0)] * (hours + 1))[i][0] for z in zones)
+            avg_conf = (sum(zone_preds.get(z, [(0, 0)] * (hours + 1))[i][1] for z in zones)
+                        / len(zones)) if zones else 0.0
+
+            predicted = round(total_pred, 0)
+            confidence = round(avg_conf, 2)
+
+            if i == 0:
+                actual = current_hour_orders
+                if predicted == 0:
+                    predicted = float(current_hour_orders)
+            else:
+                actual = None
+
             forecasts.append(DemandForecastPoint(
-                hour=f"{local_hour:02d}:00",
-                actual=round(display_actual, 0),
-                predicted=round(hist_avg * self._get_demand_multiplier(local_hour), 0),
-                confidence=1.0
+                hour=hour_label,
+                actual=actual,
+                predicted=predicted,
+                confidence=confidence
             ))
-        
-        # Current hour
-        current_actual = actual_by_hour.get(current_hour, 0)
-        current_hist = hour_avg.get(current_hour, 0)
-        current_local = (current_hour + DUBAI_OFFSET) % 24
-        # Use actual if available, otherwise historical average
-        now_value = current_actual if current_actual > 0 else current_hist
-        
-        forecasts.append(DemandForecastPoint(
-            hour=f"{current_local:02d}:00 ★",
-            actual=round(now_value, 0),
-            predicted=round(now_value, 0),
-            confidence=1.0
-        ))
-        peak_demand = now_value
-        
-        # Future hours: predictions only
-        for i in range(1, hours + 1):
-            utc_hour = (current_hour + i) % 24
-            local_hour = (utc_hour + DUBAI_OFFSET) % 24
-            base_prediction = hour_avg.get(utc_hour, now_value)
-            multiplier = self._get_demand_multiplier(local_hour)
-            predicted = base_prediction * multiplier
-            confidence = max(0.5, 1.0 - (i * 0.04))
-            
-            forecasts.append(DemandForecastPoint(
-                hour=f"{local_hour:02d}:00",
-                actual=None,
-                predicted=round(predicted, 0),
-                confidence=round(confidence, 2)
-            ))
-            
+
             if predicted > peak_demand:
                 peak_demand = predicted
-                peak_hour_utc = utc_hour
-        
-        # ── Recommendations (use local time) ──
-        peak_local = (peak_hour_utc + DUBAI_OFFSET) % 24
+                peak_hour = forecast_hour_utc
+
+        peak_local = (peak_hour + 4) % 24
+
         recommendations = []
-        if peak_demand > now_value * 1.5 and peak_demand > 3:
+        if peak_demand > current_hour_orders * 1.5 and peak_demand > 3:
             recommendations.append(
-                f"Demand expected to peak at {peak_local:02d}:00. Consider deploying additional drivers."
+                f"Demand expected to peak at {peak_local:02d}:00 with ~{int(peak_demand)} orders. "
+                f"Consider deploying additional drivers."
             )
-        
         available_drivers = self.db.query(Driver).filter(
             Driver.status == DriverStatus.AVAILABLE.value
         ).count()
-        
         if peak_demand > available_drivers * 5:
             shortage = int((peak_demand / 5) - available_drivers)
             if shortage > 0:
                 recommendations.append(
                     f"Driver shortage expected. Need approximately {shortage} more drivers for peak demand."
                 )
-        
+
         return DemandForecastResponse(
             generated_at=now,
             forecast_hours=hours,
@@ -956,14 +1204,201 @@ class AnalyticsService:
             recommendations=recommendations
         )
 
-    def _get_demand_multiplier(self, local_hour: int) -> float:
-        """Time-based demand multiplier using Dubai local hour."""
-        if 12 <= local_hour <= 14:
-            return 1.3  # Lunch peak
-        elif 18 <= local_hour <= 21:
-            return 1.5  # Dinner peak
-        elif 0 <= local_hour <= 6:
-            return 0.3  # Night low
+    # ========================================
+    # DEMAND HISTORY (24h for a specific date) — City-wide
+    # ========================================
+
+    def get_demand_history(self, target_date: str = None) -> dict:
+        """
+        Get hourly actual vs ML-predicted demand for a specific date (city-wide).
+        Optimized: 1 bulk query for features, in-memory computation.
+        """
+        now = datetime.utcnow()
+        local_now_hour = (now.hour + 4) % 24
+
+        if target_date:
+            from datetime import date as date_type
+            parts = target_date.split('-')
+            target = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
         else:
-            return 1.0
+            dubai_now = now + timedelta(hours=4)
+            target = dubai_now.date()
+
+        today_dubai = (now + timedelta(hours=4)).date()
+        is_today = (target == today_dubai)
+
+        target_start_utc = datetime(target.year, target.month, target.day, 0, 0, 0) - timedelta(hours=4)
+        target_end_utc = target_start_utc + timedelta(hours=24)
+
+        # Get actual hourly counts
+        hourly_actual = self.db.query(
+            extract('hour', Order.created_at + text("interval '4 hours'")).label('local_hour'),
+            func.count(Order.order_id).label('count')
+        ).filter(
+            Order.created_at >= target_start_utc,
+            Order.created_at < target_end_utc
+        ).group_by(text('local_hour')).all()
+        actual_map = {int(row[0]): row[1] for row in hourly_actual}
+
+        zones = self._get_all_zones()
+
+        # Build 24 forecast times in UTC
+        forecast_times = []
+        for h in range(24):
+            utc_hour = (h - 4) % 24
+            ft = datetime(target.year, target.month, target.day, utc_hour, 0, 0)
+            if h < 4:
+                ft = ft - timedelta(days=1)
+            forecast_times.append(ft)
+
+        # Pre-fetch demand data (170h before earliest forecast to cover lags)
+        data_start = min(forecast_times) - timedelta(hours=170)
+        data_end = max(forecast_times) + timedelta(hours=1)
+        demand_data = self._prefetch_demand_data(zones, data_start, data_end)
+
+        # Batch predict all zones × 24 hours + calibrate
+        zone_preds = self._batch_predict_all_zones(zones, forecast_times, demand_data)
+        cal_factor = self._compute_calibration_factor(
+            zone_preds, actual_map, zones, local_now_hour, is_today
+        )
+        zone_preds = self._apply_calibration(zone_preds, cal_factor)
+
+        data = []
+        total_actual = 0
+        total_predicted = 0.0
+
+        for h in range(24):
+            hour_label = f"{h:02d}:00"
+
+            # Sum zone predictions for city-wide total
+            predicted = round(sum(zone_preds.get(z, [(0, 0)] * 24)[h][0] for z in zones), 0)
+
+            if is_today:
+                actual = actual_map.get(h, 0) if h <= local_now_hour else None
+            else:
+                actual = actual_map.get(h, 0)
+
+            if actual is not None:
+                total_actual += actual
+            total_predicted += predicted
+
+            data.append({"hour": hour_label, "actual": actual, "predicted": predicted})
+
+        return {
+            "date": target.isoformat(),
+            "date_label": target.strftime("%b %d, %Y"),
+            "is_today": is_today,
+            "current_hour": local_now_hour if is_today else None,
+            "data": data,
+            "total_actual": total_actual,
+            "total_predicted": total_predicted
+        }
+
+    # ========================================
+    # ZONE-WISE DEMAND HISTORY
+    # ========================================
+
+    def get_zone_demand_history(self, target_date: str = None) -> dict:
+        """
+        Get hourly actual vs ML-predicted demand per zone.
+        Optimized: 1 bulk query + batch prediction.
+        """
+        now = datetime.utcnow()
+        local_now_hour = (now.hour + 4) % 24
+
+        if target_date:
+            from datetime import date as date_type
+            parts = target_date.split('-')
+            target = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
+        else:
+            dubai_now = now + timedelta(hours=4)
+            target = dubai_now.date()
+
+        today_dubai = (now + timedelta(hours=4)).date()
+        is_today = (target == today_dubai)
+
+        target_start_utc = datetime(target.year, target.month, target.day, 0, 0, 0) - timedelta(hours=4)
+        target_end_utc = target_start_utc + timedelta(hours=24)
+
+        zones = self._get_all_zones()
+
+        # Actual counts per zone per hour (1 query)
+        hourly_actual_by_zone = self.db.query(
+            Order.pickup_zone,
+            extract('hour', Order.created_at + text("interval '4 hours'")).label('local_hour'),
+            func.count(Order.order_id).label('count')
+        ).filter(
+            Order.created_at >= target_start_utc,
+            Order.created_at < target_end_utc
+        ).group_by(Order.pickup_zone, text('local_hour')).all()
+
+        zone_actual_map = {}
+        for row in hourly_actual_by_zone:
+            zone_actual_map.setdefault(row[0], {})[int(row[1])] = row[2]
+
+        # Build 24 forecast times in UTC
+        forecast_times = []
+        for h in range(24):
+            utc_hour = (h - 4) % 24
+            ft = datetime(target.year, target.month, target.day, utc_hour, 0, 0)
+            if h < 4:
+                ft = ft - timedelta(days=1)
+            forecast_times.append(ft)
+
+        # Pre-fetch demand data + batch predict
+        data_start = min(forecast_times) - timedelta(hours=170)
+        data_end = max(forecast_times) + timedelta(hours=1)
+        demand_data = self._prefetch_demand_data(zones, data_start, data_end)
+        zone_preds = self._batch_predict_all_zones(zones, forecast_times, demand_data)
+
+        # Build combined actual map for calibration
+        combined_actual_map = {}
+        for zone_id, hours in zone_actual_map.items():
+            for h, cnt in hours.items():
+                combined_actual_map[h] = combined_actual_map.get(h, 0) + cnt
+        cal_factor = self._compute_calibration_factor(
+            zone_preds, combined_actual_map, zones, local_now_hour, is_today
+        )
+        zone_preds = self._apply_calibration(zone_preds, cal_factor)
+
+        zone_data = []
+        for zone_id in zones:
+            actual_map = zone_actual_map.get(zone_id, {})
+            zone_name = zone_id.replace('zone_', '').replace('_', ' ').title()
+            preds = zone_preds.get(zone_id, [(0, 0)] * 24)
+
+            hourly_data = []
+            zone_total_actual = 0
+            zone_total_predicted = 0.0
+
+            for h in range(24):
+                hour_label = f"{h:02d}:00"
+                predicted = round(preds[h][0], 0)
+
+                if is_today:
+                    actual = actual_map.get(h, 0) if h <= local_now_hour else None
+                else:
+                    actual = actual_map.get(h, 0)
+
+                if actual is not None:
+                    zone_total_actual += actual
+                zone_total_predicted += predicted
+
+                hourly_data.append({"hour": hour_label, "actual": actual, "predicted": predicted})
+
+            zone_data.append({
+                "zone_id": zone_id,
+                "zone_name": zone_name,
+                "data": hourly_data,
+                "total_actual": zone_total_actual,
+                "total_predicted": zone_total_predicted
+            })
+
+        return {
+            "date": target.isoformat(),
+            "date_label": target.strftime("%b %d, %Y"),
+            "is_today": is_today,
+            "current_hour": local_now_hour if is_today else None,
+            "zones": zone_data
+        }
 
