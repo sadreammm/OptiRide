@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.db.database import get_db
-from app.core.dependencies import get_current_admin, get_current_user
+from app.core.dependencies import get_current_admin, get_current_user, get_current_admin_head
 from app.services.auth_service import AuthService
-from app.schemas.auth import LoginRequest, AdminCreateUserRequest, LoginResponse, UserResponse, FirebaseLoginRequest
+from app.schemas.auth import LoginRequest, AdminCreateUserRequest, LoginResponse, UserResponse, FirebaseLoginRequest, UserRole
 
 router = APIRouter()
 
@@ -13,9 +13,22 @@ def admin_create_user(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
+    """
+    Create a new user. Role-based access control:
+    - Regular admin (access_level 1): Can only create drivers
+    - Admin head (access_level >= 2): Can create both drivers and admins
+    """
     auth_service = AuthService()
+    
+    # Check if regular admin is trying to create another admin
+    if data.role == UserRole.ADMINISTRATOR and admin.access_level < 2:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin heads can create administrator accounts"
+        )
+    
     admin_id = admin.admin_id
-    user = auth_service.create_user(data=data, db=db, admin_id=admin_id)
+    user = auth_service.create_user(data=data, db=db, admin_id=admin_id, creator_access_level=admin.access_level)
 
     return UserResponse.model_validate(user)
 

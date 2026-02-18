@@ -23,7 +23,7 @@ from app.schemas.auth import (
 class AuthService:
     
     @staticmethod
-    def create_user(db: Session, data: AdminCreateUserRequest, admin_id: str) -> UserResponse:
+    def create_user(db: Session, data: AdminCreateUserRequest, admin_id: str, creator_access_level: int = 1) -> UserResponse:
         firebase_user = create_firebase_user(
             email=data.email,
             password=data.password,
@@ -43,11 +43,15 @@ class AuthService:
             db.flush()
 
             if data.role == UserRole.ADMINISTRATOR:
+                # Determine role string based on access level
+                role_str = "admin_head" if data.access_level >= 2 else "admin"
+                
                 profile = Administrator(
                     user_id=user.user_id,
                     admin_id=str(uuid.uuid4()),
-                    role="administrator",
+                    role=role_str,
                     department=data.department if data.department else "",
+                    access_level=data.access_level if data.access_level else 1
                 )
             elif data.role == UserRole.DRIVER:
                 profile = Driver(
@@ -97,8 +101,17 @@ class AuthService:
         user.last_login = datetime.utcnow()
         db.commit()
 
+        # Create user response
+        user_response = UserResponse.model_validate(user)
+        
+        # If user is an administrator, include access_level
+        if user.user_type == "administrator":
+            admin = db.query(Administrator).filter(Administrator.user_id == user.user_id).first()
+            if admin:
+                user_response.access_level = admin.access_level
+
         return LoginResponse(
-            user=UserResponse.model_validate(user),
+            user=user_response,
             token=TokenResponse(
                 token=token,
                 token_type="bearer",
