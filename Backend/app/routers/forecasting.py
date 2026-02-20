@@ -4,6 +4,7 @@ from typing import Optional
 
 from app.db.database import get_db
 from app.core.dependencies import get_current_admin
+from app.models.zone import Zone
 from app.models.user import User
 from app.services.forecasting_service import ForecastingService
 
@@ -17,19 +18,14 @@ def train_zone_models(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """
-    Train ML forecasting models for a specific zone.
-    Requires at least 100 hourly data points (~4+ days of order history).
-    """
     service = ForecastingService(db)
     result = service.train_zone_models(zone_id=zone_id, days_history=days_history)
 
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     
-    # Clear analytics cache so new models are loaded for predictions
-    from app.services.analytics_service import AnalyticsService
-    AnalyticsService.clear_model_cache()
+    # Clear cache so new models are loaded for predictions
+    ForecastingService.clear_model_cache()
 
     return result
 
@@ -40,11 +36,6 @@ def train_all_zones(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """
-    Train ML forecasting models for ALL zones in one call.
-    Returns per-zone results showing which succeeded and which lacked data.
-    """
-    from app.models.zone import Zone
     service = ForecastingService(db)
     zones = db.query(Zone).all()
 
@@ -56,8 +47,7 @@ def train_all_zones(
     # Clear cache if any training succeeded
     trained = [r for r in results if r.get("status") == "trained"]
     if trained:
-        from app.services.analytics_service import AnalyticsService
-        AnalyticsService.clear_model_cache()
+        ForecastingService.clear_model_cache()
 
     failed = [r for r in results if "error" in r]
 
@@ -74,11 +64,6 @@ def update_all_live_demand(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """
-    Update live demand scores for ALL zones in one call.
-    Blends ML forecasts with real-time order data for each zone.
-    """
-    from app.models.zone import Zone
     service = ForecastingService(db)
     zones = db.query(Zone).all()
 
@@ -101,10 +86,6 @@ def generate_forecast(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """
-    Generate demand forecast using trained ML models.
-    Returns predictions at 15, 30, and 60 minute intervals.
-    """
     if method not in ("ensemble", "ml_only", "ts_only"):
         raise HTTPException(status_code=400, detail="Invalid method. Use: ensemble, ml_only, ts_only")
 
@@ -141,10 +122,6 @@ def update_live_demand(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """
-    Update a zone's live demand score by blending ML forecast with real-time order data.
-    This updates the zone.demand_score and zone.pending_orders fields.
-    """
     service = ForecastingService(db)
     result = service.update_live_demand(zone_id=zone_id)
 
@@ -160,9 +137,5 @@ def get_demand_patterns(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """
-    Get learned demand patterns (hourly and daily) for a zone.
-    Patterns are generated during model training.
-    """
     service = ForecastingService(db)
     return service.get_demand_patterns(zone_id=zone_id)

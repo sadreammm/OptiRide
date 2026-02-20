@@ -209,29 +209,21 @@ class ForecastResponse(BaseModel):
     message: Optional[str] = None
 
 
-# ============================================
-# NEW AGGREGATED ANALYTICS SCHEMAS
-# ============================================
-
 class AlertTypeSummary(BaseModel):
-    """Summary of alerts grouped by type"""
     alert_type: str
     count: int
     percentage: float
 
 class AlertDaySummary(BaseModel):
-    """Summary of alerts grouped by day"""
     day: str
     count: int
 
 class AlertZoneSummary(BaseModel):
-    """Summary of alerts grouped by zone"""
     zone_id: str
     zone_name: Optional[str] = None
     count: int
 
 class AlertsSummaryResponse(BaseModel):
-    """Complete alerts summary for analytics dashboard"""
     total_alerts: int
     period: str
     by_type: List[AlertTypeSummary]
@@ -241,7 +233,6 @@ class AlertsSummaryResponse(BaseModel):
 
 
 class SafetyScoreResponse(BaseModel):
-    """Fleet-wide safety score calculation"""
     overall_score: float  # 0-100
     grade: str  # A+, A, B, C, D, F
     trend: str  # improving, declining, stable
@@ -267,10 +258,9 @@ class SafetyScoreResponse(BaseModel):
 
 
 class TopPerformerDriver(BaseModel):
-    """Top performing driver details"""
     driver_id: str
     name: str
-    efficiency_score: float  # 0-100
+    efficiency_score: float
     orders_completed: int
     total_earnings: float
     avg_delivery_time_min: float
@@ -280,21 +270,18 @@ class TopPerformerDriver(BaseModel):
 
 
 class TopPerformersResponse(BaseModel):
-    """List of top performing drivers"""
     period: str
     drivers: List[TopPerformerDriver]
 
 
 class DemandForecastPoint(BaseModel):
-    """Single forecast data point"""
     hour: str
     actual: Optional[float] = None
     predicted: float
-    confidence: float  # 0-1
+    confidence: float
 
 
 class DemandForecastResponse(BaseModel):
-    """Demand forecast for next N hours"""
     generated_at: datetime
     forecast_hours: int
     current_demand: int
@@ -305,18 +292,17 @@ class DemandForecastResponse(BaseModel):
 
 
 class DemandHistoryPoint(BaseModel):
-    """Single hourly data point for demand history"""
-    hour: str  # "00:00", "01:00", ..., "23:00" in local time
+    hour: str 
     actual: Optional[int] = None
     predicted: Optional[float] = None
 
 
 class DemandHistoryResponse(BaseModel):
-    """Hourly demand data for a specific date"""
-    date: str  # "2026-02-18"
-    date_label: str  # "Feb 18, 2026"
+    date: str 
+    date_label: str
     is_today: bool
-    current_hour: Optional[int] = None  # only set for today, local hour (0-23)
+    current_hour: Optional[int] = None  
     data: List[DemandHistoryPoint]
     total_actual: int
-    total_predicted: float
+    total_predicted: float    
+    recommendations: List[str] = []

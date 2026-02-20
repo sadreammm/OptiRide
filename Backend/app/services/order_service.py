@@ -12,6 +12,7 @@ from app.models.order import Order
 from app.models.driver import Driver
 from app.services.driver_service import DriverService
 from app.schemas.driver import DriverStatus
+from app.models.zone import Zone
 from app.schemas.order import (
     OrderCreate, OrderUpdate, OrderAssign, OrderPickup, OrderDeliver,
     OrderStats, OrderStatus)
@@ -132,7 +133,6 @@ class OrderService:
         return order
     
     def offer_to_driver(self, order_id: str, driver_id: str) -> Order:
-        """Offer an order to a specific driver (sets status to offered)"""
         order = self.get_order(order_id)
         if not order:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
@@ -254,7 +254,6 @@ class OrderService:
                 detail="This order was not offered to you"
             )
         
-        # Reject the order - return to pending
         order.status = OrderStatus.pending.value
         order.driver_id = None
         order.pickup_time = None
@@ -357,13 +356,11 @@ class OrderService:
         include_completed: bool = True,
         days: int = 7
     ) -> List[Order]:
-        """Get all orders for a driver including offered, completed/cancelled within the specified days"""
         from datetime import timedelta
         
         query = self.db.query(Order).filter(Order.driver_id == driver_id)
         
         if include_completed:
-            # Include all statuses including offered (for pending tab)
             cutoff = datetime.now() - timedelta(days=days)
             query = query.filter(
                 (Order.status.in_([OrderStatus.offered.value, OrderStatus.assigned.value, OrderStatus.picked_up.value])) |
@@ -470,5 +467,25 @@ class OrderService:
         order.price = round(base_fee + (order.distance_km * per_km_rate), 2)
 
     def assign_zones(self, order: Order):
-        # TODO: Implement zone assignment using clustering
-        return
+        def find_zone(longitude: float, latitude: float) -> Optional[str]:
+            point = WKTElement(f'POINT({longitude} {latitude})', srid=4326)
+
+            zone = self.db.query(Zone).filter(
+                Zone.boundary.isnot(None),
+                func.ST_Contains(Zone.boundary, point)
+            ).first()
+
+            if zone:
+                return zone.zone_id
+
+            nearest = self.db.query(
+                Zone.zone_id,
+                func.ST_Distance(Zone.centroid, point).label('dist')
+            ).filter(
+                Zone.centroid.isnot(None)
+            ).order_by('dist').first()
+
+            return nearest.zone_id if nearest else None
+
+        order.pickup_zone = find_zone(order.pickup_longitude, order.pickup_latitude)
+        order.dropoff_zone = find_zone(order.dropoff_longitude, order.dropoff_latitude)

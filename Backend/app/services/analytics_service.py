@@ -10,6 +10,7 @@ from app.models.order import Order
 from app.models.driver import Driver
 from app.models.alert import Alert
 from app.models.zone import Zone
+from app.services.forecasting_service import ForecastingService
 
 from app.schemas.alert import AlertSeverity
 from app.schemas.driver import DriverStatus, DutyStatus
@@ -479,21 +480,15 @@ class AnalyticsService:
             start = now - timedelta(days=1)
         return start, now
 
-    # ============================================
-    # NEW AGGREGATED ANALYTICS METHODS
-    # ============================================
 
     def get_alerts_summary(self, period: str = "last_7_days") -> AlertsSummaryResponse:
-        """Get aggregated alerts summary for analytics dashboard"""
         start_date, end_date = self._get_date_range(period)
         
-        # Total alerts in period
         total_alerts = self.db.query(Alert).filter(
             Alert.timestamp >= start_date,
             Alert.timestamp <= end_date
         ).count()
         
-        # Group by alert type
         by_type_query = self.db.query(
             Alert.alert_type,
             func.count(Alert.alert_id).label('count')
@@ -511,7 +506,6 @@ class AnalyticsService:
             for row in by_type_query
         ]
         
-        # Group by day of week
         by_day_query = self.db.query(
             func.to_char(Alert.timestamp, 'Dy').label('day_name'),
             func.count(Alert.alert_id).label('count')
@@ -520,7 +514,6 @@ class AnalyticsService:
             Alert.timestamp <= end_date
         ).group_by(text('day_name')).all()
         
-        # Ensure all days are represented
         day_counts = {row[0]: row[1] for row in by_day_query}
         days_order = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
         by_day = [
@@ -528,7 +521,6 @@ class AnalyticsService:
             for day in days_order
         ]
         
-        # Group by zone (using driver's current_zone)
         by_zone_query = self.db.query(
             Driver.current_zone,
             func.count(Alert.alert_id).label('count')
@@ -547,7 +539,6 @@ class AnalyticsService:
                 count=row[1]
             ))
         
-        # Group by severity
         by_severity_query = self.db.query(
             Alert.severity,
             func.count(Alert.alert_id).label('count')
@@ -569,9 +560,7 @@ class AnalyticsService:
         )
 
     def get_safety_score(self, period: str = "last_7_days") -> SafetyScoreResponse:
-        """
-        Calculate fleet-wide safety score based on multiple factors.
-        
+        """     
         Safety Score Formula:
         - Base score: 100
         - Deductions based on:
@@ -580,17 +569,13 @@ class AnalyticsService:
           - Speeding events: -1 point each (max -15)
           - Harsh braking: -0.5 points each (max -10)
           - Accidents: -15 points each (max -30)
-        
-        Component scores calculated separately for detailed breakdown.
         """
         start_date, end_date = self._get_date_range(period)
         
-        # Get previous period for trend comparison
         duration = end_date - start_date
         prev_end = start_date
         prev_start = prev_end - duration
         
-        # Count alerts by type for current period
         alert_counts = self.db.query(
             Alert.alert_type,
             func.count(Alert.alert_id).label('count')
@@ -601,13 +586,11 @@ class AnalyticsService:
         
         alert_map = {row[0]: row[1] for row in alert_counts}
         
-        # Extract specific alert counts
         fatigue_alerts = alert_map.get('fatigue', 0) + alert_map.get('fatigue_warning', 0)
         speeding_events = alert_map.get('speeding', 0) + alert_map.get('speed_violation', 0)
         harsh_braking = alert_map.get('harsh_braking', 0)
         accidents = alert_map.get('accident', 0)
         
-        # Count by severity
         critical_query = self.db.query(func.count(Alert.alert_id)).filter(
             Alert.timestamp >= start_date,
             Alert.timestamp <= end_date,
@@ -619,7 +602,6 @@ class AnalyticsService:
             Alert.timestamp <= end_date
         ).count()
         
-        # Get total orders for accident rate calculation
         total_orders = self.db.query(Order).filter(
             Order.created_at >= start_date,
             Order.created_at <= end_date
@@ -627,16 +609,8 @@ class AnalyticsService:
         
         accident_rate = (accidents / total_orders * 100) if total_orders > 0 else 0.0
         
-        # ============================================
-        # SAFETY SCORE CALCULATION
-        # ============================================
-        
-        # Component 1: Fatigue Score (25% weight)
-        # Base 100, -5 per fatigue alert, min 0
         fatigue_score = max(0, 100 - (fatigue_alerts * 5))
         
-        # Component 2: Incident Score (35% weight)
-        # Base 100, weighted by severity
         incident_deduction = (
             (critical_query * 10) +  # Critical: -10 each
             (accidents * 15) +        # Accidents: -15 each
@@ -645,8 +619,6 @@ class AnalyticsService:
         )
         incident_score = max(0, 100 - min(incident_deduction, 100))
         
-        # Component 3: Compliance Score (20% weight)
-        # Based on acknowledged vs unacknowledged alerts
         unacknowledged = self.db.query(Alert).filter(
             Alert.timestamp >= start_date,
             Alert.timestamp <= end_date,
@@ -656,8 +628,6 @@ class AnalyticsService:
         acknowledgment_rate = ((total_incidents - unacknowledged) / total_incidents * 100) if total_incidents > 0 else 100
         compliance_score = min(100, acknowledgment_rate)
         
-        # Component 4: Behavior Score (20% weight)
-        # Based on driving behavior patterns
         behavior_incidents = speeding_events + harsh_braking
         active_drivers = self.db.query(func.count(Driver.driver_id)).filter(
             Driver.duty_status == DutyStatus.ON_DUTY.value
@@ -666,7 +636,6 @@ class AnalyticsService:
         incidents_per_driver = behavior_incidents / active_drivers
         behavior_score = max(0, 100 - (incidents_per_driver * 10))
         
-        # Overall Safety Score (weighted average)
         overall_score = (
             fatigue_score * 0.25 +
             incident_score * 0.35 +
@@ -674,7 +643,6 @@ class AnalyticsService:
             behavior_score * 0.20
         )
         
-        # Calculate grade
         if overall_score >= 95: grade = "A+"
         elif overall_score >= 90: grade = "A"
         elif overall_score >= 80: grade = "B"
@@ -682,7 +650,6 @@ class AnalyticsService:
         elif overall_score >= 60: grade = "D"
         else: grade = "F"
         
-        # Calculate trend from previous period
         prev_incidents = self.db.query(Alert).filter(
             Alert.timestamp >= prev_start,
             Alert.timestamp <= prev_end
@@ -690,10 +657,9 @@ class AnalyticsService:
         
         if prev_incidents > 0:
             trend_pct = ((prev_incidents - total_incidents) / prev_incidents) * 100
-            # Cap trend percentage to reasonable bounds
             trend_pct = max(-100, min(100, trend_pct))
         else:
-            trend_pct = 0 if total_incidents == 0 else -50  # Default to -50% if no prior data
+            trend_pct = 0 if total_incidents == 0 else -50
         
         if trend_pct > 5:
             trend = "improving"
@@ -702,7 +668,6 @@ class AnalyticsService:
         else:
             trend = "stable"
         
-        # Previous period score (simplified calculation)
         prev_fatigue = self.db.query(Alert).filter(
             Alert.timestamp >= prev_start,
             Alert.timestamp <= prev_end,
@@ -730,10 +695,8 @@ class AnalyticsService:
         )
 
     def get_top_performers(self, period: str = "last_7_days", limit: int = 5) -> TopPerformersResponse:
-        """Get top performing drivers based on efficiency, safety, and reliability"""
         start_date, end_date = self._get_date_range(period)
         
-        # Get all active drivers with their metrics
         drivers_query = self.db.query(Driver).filter(
             Driver.duty_status.in_([DutyStatus.ON_DUTY.value, DutyStatus.OFF_DUTY.value])
         ).all()
@@ -741,7 +704,6 @@ class AnalyticsService:
         driver_scores = []
         
         for driver in drivers_query:
-            # Get order stats for this driver
             orders = self.db.query(Order).filter(
                 Order.driver_id == driver.driver_id,
                 Order.assigned_at >= start_date,
@@ -750,7 +712,6 @@ class AnalyticsService:
             
             orders_completed = orders.filter(Order.status == OrderStatus.delivered.value).count()
             
-            # Skip drivers with no orders in period
             if orders_completed == 0:
                 continue
             
@@ -763,7 +724,6 @@ class AnalyticsService:
                 Order.duration_min.isnot(None)
             ).with_entities(func.avg(Order.duration_min)).scalar() or 0.0
             
-            # Safety score based on alerts
             safety_alerts = self.db.query(Alert).filter(
                 Alert.driver_id == driver.driver_id,
                 Alert.timestamp >= start_date,
@@ -772,7 +732,6 @@ class AnalyticsService:
             
             driver_safety_score = max(0, 100 - (safety_alerts * 5))
             
-            # On-time rate (orders delivered within estimated time)
             on_time_orders = orders.filter(
                 Order.status == OrderStatus.delivered.value,
                 Order.duration_min <= Order.estimated_duration_min
@@ -780,8 +739,6 @@ class AnalyticsService:
             
             on_time_rate = (on_time_orders / orders_completed * 100) if orders_completed > 0 else 100
             
-            # Calculate efficiency score
-            # Factors: orders completed, avg delivery time, safety, on-time rate
             efficiency_score = (
                 min(100, orders_completed * 2) * 0.30 +  # Order volume (max 50 orders = 100)
                 max(0, 100 - avg_delivery_time) * 0.25 +  # Speed (lower is better)
@@ -799,7 +756,6 @@ class AnalyticsService:
                 'on_time_rate': on_time_rate
             })
         
-        # Sort by efficiency score and get top performers
         driver_scores.sort(key=lambda x: x['efficiency_score'], reverse=True)
         top_drivers = driver_scores[:limit]
         
@@ -821,645 +777,15 @@ class AnalyticsService:
             ]
         )
 
-    # ========================================
-    # ML-POWERED DEMAND PREDICTION (OPTIMIZED)
-    # ========================================
-    #
-    # Performance: pre-fetches ALL demand data in 1 SQL query, computes
-    # features in-memory, and caches loaded models. Reduces ~2,880 DB
-    # queries to 1-2 per endpoint call.
-
-    # Class-level cache for loaded ML models (shared across requests)
-    _ml_models_cache = {}   # {zone_id: DemandForecaster or None}
-    _zones_cache = None
-    _zones_cache_time = None
-
-    @classmethod
-    def _get_base_model_dir(cls):
-        """Get absolute path to ml/models directory."""
-        this_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(this_dir, '..', '..', 'ml', 'models')
-
-    @staticmethod
-    def clear_model_cache():
-        """Clear the ML model cache to force reload from disk."""
-        AnalyticsService._ml_models_cache = {}
-
-    def _get_forecaster(self, zone_id: str):
-        print(f"[DEBUG] Loading forecaster for zone: {zone_id}")
-        """Load and cache DemandForecaster for a zone."""
-        if zone_id in AnalyticsService._ml_models_cache:
-            return AnalyticsService._ml_models_cache[zone_id]
-
-        try:
-            from ml.demand_models import DemandForecaster
-            forecaster = DemandForecaster()
-            model_dir = os.path.normpath(os.path.join(
-                self._get_base_model_dir(), f'zone_{zone_id}'
-            ))
-            if not os.path.isdir(model_dir):
-                print(f"[DEBUG] Model dir not found for zone {zone_id}: {model_dir}")
-                AnalyticsService._ml_models_cache[zone_id] = None
-                return None
-            forecaster.load_models(model_dir)
-            if not forecaster.models:
-                print(f"[DEBUG] No models loaded for zone {zone_id} from {model_dir}")
-                AnalyticsService._ml_models_cache[zone_id] = None
-                return None
-            print(f"[DEBUG] Loaded models for zone {zone_id}: {list(forecaster.models.keys())}")
-            print(f"[DEBUG] Feature columns for zone {zone_id}: {getattr(forecaster, 'feature_columns', None)}")
-            # Print feature importances for each model if available
-            for model_name, model in forecaster.models.items():
-                if hasattr(model, 'feature_importances_'):
-                    print(f"[DEBUG] Feature importances for {model_name} in zone {zone_id}:")
-                    for col, imp in zip(forecaster.feature_columns, model.feature_importances_):
-                        print(f"    {col}: {imp:.4f}")
-                elif hasattr(model, 'coef_'):
-                    print(f"[DEBUG] Coefficients for {model_name} in zone {zone_id}:")
-                    for col, coef in zip(forecaster.feature_columns, model.coef_):
-                        print(f"    {col}: {coef:.4f}")
-                else:
-                    print(f"[DEBUG] No feature importances or coefficients for {model_name} in zone {zone_id}")
-            AnalyticsService._ml_models_cache[zone_id] = forecaster
-            return forecaster
-        except Exception as e:
-            print(f"[DEBUG] Exception loading forecaster for zone {zone_id}: {e}")
-            AnalyticsService._ml_models_cache[zone_id] = None
-            return None
-
-    def _get_all_zones(self) -> list:
-        """Get all zone IDs (cached for 60s)."""
-        now = datetime.utcnow()
-        if (AnalyticsService._zones_cache is not None and
-                AnalyticsService._zones_cache_time and
-                (now - AnalyticsService._zones_cache_time).seconds < 60):
-            return AnalyticsService._zones_cache
-        zones = [z[0] for z in self.db.query(Zone.zone_id).all()]
-        AnalyticsService._zones_cache = zones
-        AnalyticsService._zones_cache_time = now
-        return zones
-
-    def _prefetch_demand_data(self, zones: list, start_utc: datetime, end_utc: datetime) -> dict:
-        """
-        Pre-fetch ALL order counts by (zone, hour_bucket) in ONE query.
-        Returns: {zone_id: {hour_bucket_datetime: count}}
-        """
-        import numpy as np
-        results = self.db.query(
-            Order.pickup_zone,
-            func.date_trunc('hour', Order.created_at).label('hour_bucket'),
-            func.count(Order.order_id).label('cnt')
-        ).filter(
-            Order.pickup_zone.in_(zones),
-            Order.created_at >= start_utc,
-            Order.created_at < end_utc
-        ).group_by(
-            Order.pickup_zone,
-            func.date_trunc('hour', Order.created_at)
-        ).all()
-
-        data = {}
-        for zone_id, hour_bucket, cnt in results:
-            if zone_id not in data:
-                data[zone_id] = {}
-            data[zone_id][hour_bucket] = cnt
-        return data
-
-    def _build_features_fast(self, forecast_time: datetime, zone_demand: dict) -> dict:
-        """
-        Build ML features entirely in-memory (no DB queries).
-        zone_demand: {hour_bucket_datetime: count} for one specific zone.
-        """
-        import numpy as np
-        f = {}
-
-        # Time features
-        # Convert UTC forecast_time to Dubai Local Time (+4)
-        local_time = forecast_time + timedelta(hours=4)
-
-        f['hour'] = local_time.hour
-        f['day_of_week'] = local_time.weekday()
-        f['day_of_month'] = local_time.day
-        f['week_of_year'] = local_time.isocalendar()[1]
-        f['month'] = local_time.month
-        f['quarter'] = (local_time.month - 1) // 3 + 1
-        f['year'] = local_time.year
-        f['is_weekend'] = 1 if local_time.weekday() >= 5 else 0
-        f['is_breakfast'] = 1 if 7 <= local_time.hour < 11 else 0
-        f['is_lunch'] = 1 if 12 <= local_time.hour < 15 else 0
-        f['is_dinner'] = 1 if 18 <= local_time.hour < 21 else 0
-        f['is_late_night'] = 1 if local_time.hour >= 22 or local_time.hour < 3 else 0
-        f['is_workday'] = 1 if local_time.weekday() < 5 else 0
-
-        # Cyclical features
-        f['hour_sin'] = np.sin(2 * np.pi * f['hour'] / 24)
-        f['hour_cos'] = np.cos(2 * np.pi * f['hour'] / 24)
-        f['dow_sin'] = np.sin(2 * np.pi * f['day_of_week'] / 7)
-        f['dow_cos'] = np.cos(2 * np.pi * f['day_of_week'] / 7)
-        f['dom_sin'] = np.sin(2 * np.pi * f['day_of_month'] / 30)
-        f['dom_cos'] = np.cos(2 * np.pi * f['day_of_month'] / 30)
-        f['woy_sin'] = np.sin(2 * np.pi * f['week_of_year'] / 52)
-        f['woy_cos'] = np.cos(2 * np.pi * f['week_of_year'] / 52)
-        f['month_sin'] = np.sin(2 * np.pi * f['month'] / 12)
-        f['month_cos'] = np.cos(2 * np.pi * f['month'] / 12)
-        f['quarter_sin'] = np.sin(2 * np.pi * f['quarter'] / 4)
-        f['quarter_cos'] = np.cos(2 * np.pi * f['quarter'] / 4)
-        f['year_sin'] = np.sin(2 * np.pi * f['year'] / 100)
-        f['year_cos'] = np.cos(2 * np.pi * f['year'] / 100)
-
-        # Lag features from pre-fetched data
-        ft_truncated = forecast_time.replace(minute=0, second=0, microsecond=0)
-        for lag in [1, 2, 3, 6, 12, 24, 48, 168]:
-            lag_time = ft_truncated - timedelta(hours=lag)
-            f[f'demand_lag_{lag}'] = float(zone_demand.get(lag_time, 0))
-
-        # Rolling features from pre-fetched data
-        for window in [3, 6, 12, 24]:
-            values = []
-            for h in range(1, window + 1):
-                t = ft_truncated - timedelta(hours=h)
-                values.append(zone_demand.get(t, 0))
-            f[f'demand_rolling_mean_{window}'] = float(np.mean(values)) if values else 0.0
-            f[f'demand_rolling_std_{window}'] = float(np.std(values)) if len(values) > 1 else 0.0
-            f[f'demand_rolling_min_{window}'] = float(min(values)) if values else 0.0
-            f[f'demand_rolling_max_{window}'] = float(max(values)) if values else 0.0
-
-        # cv = std / (mean + 1)
-        mean_24 = f.get('demand_rolling_mean_24', 0.0)
-        std_24 = f.get('demand_rolling_std_24', 0.0)
-        f['demand_cv'] = std_24 / (mean_24 + 1)
-
-        # Derived features
-        f['weekend_dinner'] = f['is_weekend'] * f['is_dinner']
-        f['workday_lunch'] = f['is_workday'] * f['is_lunch']
-        if 'demand_lag_1' in f and 'demand_lag_2' in f:
-            f['demand_momentum'] = f['demand_lag_1'] - f['demand_lag_2']
-
-        # Defaults for price/distance/duration columns
-        f['price'] = 0.0
-        f['distance_km'] = 0.0
-        f['duration_min'] = 0.0
-
-        print(f"[DEBUG] Features for forecast_time {forecast_time}: {f}")
-        return f
-
-    def _batch_predict_all_zones(
-        self, zones: list, forecast_times_utc: list, demand_data: dict
-    ) -> dict:
-        """
-        Run ML predictions for all zones × all forecast hours using BATCH inference.
-        Builds 1 DataFrame per zone (N rows = N forecast times), runs prediction once.
-        Returns: {zone_id: [(predicted, confidence), ...]}
-        """
-        import numpy as np
-        n = len(forecast_times_utc)
-        results = {}
-
-        for zone_id in zones:
-            forecaster = self._get_forecaster(zone_id)
-            if forecaster is None:
-                print(f"[DEBUG] No forecaster for zone {zone_id}, predictions will be zero.")
-                results[zone_id] = [(0.0, 0.0)] * n
-                continue
-
-            zone_demand = demand_data.get(zone_id, {})
-
-            try:
-                # Build all feature rows at once
-                feature_rows = [self._build_features_fast(ft, zone_demand) for ft in forecast_times_utc]
-                features_df = pd.DataFrame(feature_rows)
-
-                # Align columns
-                for col in forecaster.feature_columns:
-                    if col not in features_df.columns:
-                        features_df[col] = 0
-                features_df = features_df[forecaster.feature_columns]
-                
-                # print(f"[DEBUG] Predicting for zone {zone_id} with features shape {features_df.shape}")
-                preds, confs = forecaster.predict_ensemble_batch(features_df)
-                # print(f"[DEBUG] Predictions for zone {zone_id}: {preds}")
-                results[zone_id] = [(max(0, float(p)), float(c)) for p, c in zip(preds, confs)]
-            except Exception as e:
-                print(f"[DEBUG] Exception during prediction for zone {zone_id}: {e}")
-                results[zone_id] = [(0.0, 0.0)] * n
-
-        return results
-
-    def _compute_calibration_factor(
-        self, zone_preds: dict, actual_map: dict,
-        zones: list, local_now_hour: int, is_today: bool
-    ) -> float:
-        """
-        Compute scaling factor by comparing ML predictions to actual orders
-        for ALL completed hours with data (not just last 3).
-        Now calibrates for all dates, not just today.
-        Returns factor clamped to [0.5, 4.0].
-        """
-        # For today, only use completed hours; for past days, use all 24
-        if is_today and local_now_hour < 1:
-            print(f"[DEBUG] Calibration: not enough hours for today, factor=1.0")
-            return 1.0
-
-        total_actual = 0
-        total_predicted = 0.0
-        hours_with_data = 0
-
-        if is_today:
-            hour_range = range(0, local_now_hour)
-        else:
-            hour_range = range(0, 24)
-
-        for h in hour_range:
-            actual = actual_map.get(h, 0)
-            if actual == 0:
-                continue
-            predicted = sum(zone_preds.get(z, [(0, 0)] * 24)[h][0] for z in zones)
-            if predicted <= 0:
-                continue
-            total_actual += actual
-            total_predicted += predicted
-            hours_with_data += 1
-
-        if hours_with_data < 2:
-            print(f"[DEBUG] Calibration: not enough data (hours_with_data={hours_with_data}), factor=1.0")
-            return 1.0
-        
-        # If total predicted is very low, don't calibrate (avoid division by zero or huge factors)
-        if total_predicted < 5.0:
-             return 1.0
-
-        factor = total_actual / total_predicted
-        print(f"[DEBUG] Calibration: total_actual={total_actual}, total_predicted={total_predicted}, factor={factor}")
-        
-        # If actual is 0 and predicted is high (e.g. midnight spike), the factor will be 0.0.
-        # We must clamp it, but allow it to go low to suppress the spike.
-        # INCREASED CAP: Sparse data causes 8x underprediction. Allow scale up to 10.0.
-        return max(0.1, min(10.0, factor))
-
-    def _apply_calibration(
-        self, zone_preds: dict, factor: float
-    ) -> dict:
-        """Scale all predictions by the given calibration factor."""
-        if abs(factor - 1.0) < 0.01:
-            print(f"[DEBUG] Calibration factor ~1.0, no scaling applied.")
-            return zone_preds
-        print(f"[DEBUG] Applying calibration factor {factor} to all predictions.")
-        calibrated = {}
-        for zone_id, preds in zone_preds.items():
-            calibrated[zone_id] = [
-                (round(p * factor, 2), c) for p, c in preds
-            ]
-            print(f"[DEBUG] Calibrated predictions for zone {zone_id}: {calibrated[zone_id]}")
-        return calibrated
-
-    # ========================================
-    # DEMAND FORECAST (Next N hours)
-    # ========================================
-
-    def get_demand_forecast(self, hours: int = 12) -> DemandForecastResponse:
-        """
-        Get demand forecast for the next N hours using ML models.
-        Uses batch prediction for fast response.
-        """
-        now = datetime.utcnow()
-        current_hour = now.hour
-        hour_start = now.replace(minute=0, second=0, microsecond=0)
-
-        # Current hour's actual orders
-        current_hour_orders = self.db.query(Order).filter(
-            Order.created_at >= hour_start,
-            Order.created_at < hour_start + timedelta(hours=1)
-        ).count()
-
-        total_active_orders = self.db.query(Order).filter(
-            Order.status.in_([OrderStatus.pending.value, OrderStatus.assigned.value, OrderStatus.picked_up.value])
-        ).count()
-
-        zones = self._get_all_zones()
-
-        # Build forecast times in UTC
-        forecast_times = [hour_start + timedelta(hours=i) for i in range(hours + 1)]
-
-        # Pre-fetch demand data for lag/rolling features (need up to 168h back)
-        data_start = hour_start - timedelta(hours=170)
-        data_end = hour_start + timedelta(hours=hours + 1)
-        demand_data = self._prefetch_demand_data(zones, data_start, data_end)
-
-        # Batch predict + calibrate
-        zone_preds = self._batch_predict_all_zones(zones, forecast_times, demand_data)
-
-        # Calibrate: fetch today's completed hours actuals for comparison
-        local_now_hour = (now.hour + 4) % 24
-        today_dubai = (now + timedelta(hours=4)).date()
-        today_start_utc = datetime(today_dubai.year, today_dubai.month, today_dubai.day, 0, 0, 0) - timedelta(hours=4)
-        today_end_utc = today_start_utc + timedelta(hours=24)
-        cal_actual = self.db.query(
-            extract('hour', Order.created_at + text("interval '4 hours'")).label('local_hour'),
-            func.count(Order.order_id).label('count')
-        ).filter(
-            Order.created_at >= today_start_utc,
-            Order.created_at < today_end_utc
-        ).group_by(text('local_hour')).all()
-        cal_map = {int(row[0]): row[1] for row in cal_actual}
-
-        # Build a mapping from forecast index to local hour for calibration
-        # We need zone_preds indexed by local_hour for the calibration function
-        # Remap zone_preds to local_hour indices for calibration
-        forecast_local_hours = [(ft.hour + 4) % 24 for ft in forecast_times]
-        zone_preds_by_local = {}
-        for z in zones:
-            preds_list = zone_preds.get(z, [(0, 0)] * len(forecast_times))
-            by_hour = [(0, 0)] * 24
-            for idx, lh in enumerate(forecast_local_hours):
-                if idx < len(preds_list):
-                    by_hour[lh] = preds_list[idx]
-            zone_preds_by_local[z] = by_hour
-
-        cal_factor = self._compute_calibration_factor(
-            zone_preds_by_local, cal_map, zones, local_now_hour, True
-        )
-        zone_preds = self._apply_calibration(zone_preds, cal_factor)
-
-        # Aggregate city-wide totals per hour
-        forecasts = []
-        peak_hour = current_hour
-        peak_demand = 0.0
-
-        for i, ft in enumerate(forecast_times):
-            forecast_hour_utc = ft.hour
-            local_hour = (forecast_hour_utc + 4) % 24
-            hour_label = f"{local_hour:02d}:00"
-
-            # Sum predictions across zones
-            total_pred = sum(zone_preds.get(z, [(0, 0)] * (hours + 1))[i][0] for z in zones)
-            avg_conf = (sum(zone_preds.get(z, [(0, 0)] * (hours + 1))[i][1] for z in zones)
-                        / len(zones)) if zones else 0.0
-
-            predicted = round(total_pred, 0)
-            confidence = round(avg_conf, 2)
-
-            if i == 0:
-                actual = current_hour_orders
-                if predicted == 0:
-                    predicted = float(current_hour_orders)
-            else:
-                actual = None
-
-            forecasts.append(DemandForecastPoint(
-                hour=hour_label,
-                actual=actual,
-                predicted=predicted,
-                confidence=confidence
-            ))
-
-            if predicted > peak_demand:
-                peak_demand = predicted
-                peak_hour = forecast_hour_utc
-
-        peak_local = (peak_hour + 4) % 24
-
-        recommendations = []
-        if peak_demand > current_hour_orders * 1.5 and peak_demand > 3:
-            recommendations.append(
-                f"Demand expected to peak at {peak_local:02d}:00 with ~{int(peak_demand)} orders. "
-                f"Consider deploying additional drivers."
-            )
-        available_drivers = self.db.query(Driver).filter(
-            Driver.status == DriverStatus.AVAILABLE.value
-        ).count()
-        if peak_demand > available_drivers * 5:
-            shortage = int((peak_demand / 5) - available_drivers)
-            if shortage > 0:
-                recommendations.append(
-                    f"Driver shortage expected. Need approximately {shortage} more drivers for peak demand."
-                )
-
-        return DemandForecastResponse(
-            generated_at=now,
-            forecast_hours=hours,
-            current_demand=total_active_orders,
-            peak_predicted_hour=f"{peak_local:02d}:00",
-            peak_predicted_demand=round(peak_demand, 0),
-            forecasts=forecasts,
-            recommendations=recommendations
-        )
-
-    # ========================================
-    # DEMAND HISTORY (24h for a specific date) — City-wide
-    # ========================================
-
-    def get_demand_history(self, target_date: str = None) -> dict:
-        """
-        Get hourly actual vs ML-predicted demand for a specific date (city-wide).
-        Optimized: 1 bulk query for features, in-memory computation.
-        """
-        now = datetime.utcnow()
-        local_now_hour = (now.hour + 4) % 24
-
-        if target_date:
-            from datetime import date as date_type
-            parts = target_date.split('-')
-            target = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
-        else:
-            dubai_now = now + timedelta(hours=4)
-            target = dubai_now.date()
-
-        today_dubai = (now + timedelta(hours=4)).date()
-        is_today = (target == today_dubai)
-
-        target_start_utc = datetime(target.year, target.month, target.day, 0, 0, 0) - timedelta(hours=4)
-        target_end_utc = target_start_utc + timedelta(hours=24)
-
-        # Get actual hourly counts
-        hourly_actual = self.db.query(
-            extract('hour', Order.created_at + text("interval '4 hours'")).label('local_hour'),
-            func.count(Order.order_id).label('count')
-        ).filter(
-            Order.created_at >= target_start_utc,
-            Order.created_at < target_end_utc
-        ).group_by(text('local_hour')).all()
-        actual_map = {int(row[0]): row[1] for row in hourly_actual}
-
-        zones = self._get_all_zones()
-
-        # Build 24 forecast times in UTC
-        forecast_times = []
-        for h in range(24):
-            utc_hour = (h - 4) % 24
-            ft = datetime(target.year, target.month, target.day, utc_hour, 0, 0)
-            if h < 4:
-                ft = ft - timedelta(days=1)
-            forecast_times.append(ft)
-
-
-        # Pre-fetch demand data (170h before earliest forecast to cover lags)
-        data_start = min(forecast_times) - timedelta(hours=170)
-        data_end = max(forecast_times) + timedelta(hours=1)
-        demand_data = self._prefetch_demand_data(zones, data_start, data_end)
-
-        # Batch predict all zones × 24 hours + calibrate
-        zone_preds = self._batch_predict_all_zones(zones, forecast_times, demand_data)
-        cal_factor = self._compute_calibration_factor(
-            zone_preds, actual_map, zones, local_now_hour, is_today
-        )
-        zone_preds = self._apply_calibration(zone_preds, cal_factor)
-
-        data = []
-        total_actual = 0
-        total_predicted = 0.0
-
-        for h in range(24):
-            hour_label = f"{h:02d}:00"
-
-            # Sum zone predictions for city-wide total
-            raw_sum = 0
-            for z in zones:
-                p = zone_preds.get(z, [(0, 0)] * 24)[h][0]
-                # FILTER CHANGE: Removed per-zone noise gate (p < 0.5) because it was killing
-                # valid low-volume signals during morning ramp-up (e.g. 0.4 * 10 zones = 4 orders).
-                raw_sum += p
-            
-            predicted_val = raw_sum
-
-            # --- Layer 2: Time-of-Day Dampening (The "Midnight Fix") ---
-            # If strictly off-peak (00:00 - 05:00), demand should be minimal.
-            # We assume high predictions here are "phantom" noise from the model.
-            if h < 5:
-                # If sum is significant, crush it.
-                if predicted_val > 1.0:
-                    predicted_val *= 0.15 
-            
-            # --- Layer 3: Calibration Safety (prevent < 0) ---
-            predicted = max(0.0, round(predicted_val, 0))
-
-            if is_today:
-                actual = actual_map.get(h, 0) if h <= local_now_hour else None
-            else:
-                actual = actual_map.get(h, 0)
-
-            print(f"[DEBUG] Hour {hour_label}: actual={actual}, predicted={predicted}")
-
-            if actual is not None:
-                total_actual += actual
-            total_predicted += predicted
-
-            data.append({"hour": hour_label, "actual": actual, "predicted": predicted})
-
-        return {
-            "date": target.isoformat(),
-            "date_label": target.strftime("%b %d, %Y"),
-            "is_today": is_today,
-            "current_hour": local_now_hour if is_today else None,
-            "data": data,
-            "total_actual": total_actual,
-            "total_predicted": total_predicted
-        }
-
-    # ========================================
-    # ZONE-WISE DEMAND HISTORY
-    # ========================================
-
-    def get_zone_demand_history(self, target_date: str = None) -> dict:
-        """
-        Get hourly actual vs ML-predicted demand per zone.
-        Optimized: 1 bulk query + batch prediction.
-        """
-        now = datetime.utcnow()
-        local_now_hour = (now.hour + 4) % 24
-
-        if target_date:
-            from datetime import date as date_type
-            parts = target_date.split('-')
-            target = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
-        else:
-            dubai_now = now + timedelta(hours=4)
-            target = dubai_now.date()
-
-        today_dubai = (now + timedelta(hours=4)).date()
-        is_today = (target == today_dubai)
-
-        target_start_utc = datetime(target.year, target.month, target.day, 0, 0, 0) - timedelta(hours=4)
-        target_end_utc = target_start_utc + timedelta(hours=24)
-
-        zones = self._get_all_zones()
-
-        # Actual counts per zone per hour (1 query)
-        hourly_actual_by_zone = self.db.query(
-            Order.pickup_zone,
-            extract('hour', Order.created_at + text("interval '4 hours'")).label('local_hour'),
-            func.count(Order.order_id).label('count')
-        ).filter(
-            Order.created_at >= target_start_utc,
-            Order.created_at < target_end_utc
-        ).group_by(Order.pickup_zone, text('local_hour')).all()
-
-        zone_actual_map = {}
-        for row in hourly_actual_by_zone:
-            zone_actual_map.setdefault(row[0], {})[int(row[1])] = row[2]
-
-        # Build 24 forecast times in UTC
-        forecast_times = []
-        for h in range(24):
-            utc_hour = (h - 4) % 24
-            ft = datetime(target.year, target.month, target.day, utc_hour, 0, 0)
-            if h < 4:
-                ft = ft - timedelta(days=1)
-            forecast_times.append(ft)
-
-        # Pre-fetch demand data + batch predict
-        data_start = min(forecast_times) - timedelta(hours=170)
-        data_end = max(forecast_times) + timedelta(hours=1)
-        demand_data = self._prefetch_demand_data(zones, data_start, data_end)
-        zone_preds = self._batch_predict_all_zones(zones, forecast_times, demand_data)
-
-        # Build combined actual map for calibration
-        combined_actual_map = {}
-        for zone_id, hours in zone_actual_map.items():
-            for h, cnt in hours.items():
-                combined_actual_map[h] = combined_actual_map.get(h, 0) + cnt
-        cal_factor = self._compute_calibration_factor(
-            zone_preds, combined_actual_map, zones, local_now_hour, is_today
-        )
-        zone_preds = self._apply_calibration(zone_preds, cal_factor)
-
-        zone_data = []
-        for zone_id in zones:
-            actual_map = zone_actual_map.get(zone_id, {})
-            zone_name = zone_id.replace('zone_', '').replace('_', ' ').title()
-            preds = zone_preds.get(zone_id, [(0, 0)] * 24)
-
-            hourly_data = []
-            zone_total_actual = 0
-            zone_total_predicted = 0.0
-
-            for h in range(24):
-                hour_label = f"{h:02d}:00"
-                predicted = round(preds[h][0], 0)
-
-                if is_today:
-                    actual = actual_map.get(h, 0) if h <= local_now_hour else None
-                else:
-                    actual = actual_map.get(h, 0)
-
-                if actual is not None:
-                    zone_total_actual += actual
-                zone_total_predicted += predicted
-
-                hourly_data.append({"hour": hour_label, "actual": actual, "predicted": predicted})
-
-            zone_data.append({
-                "zone_id": zone_id,
-                "zone_name": zone_name,
-                "data": hourly_data,
-                "total_actual": zone_total_actual,
-                "total_predicted": zone_total_predicted
-            })
-
-        return {
-            "date": target.isoformat(),
-            "date_label": target.strftime("%b %d, %Y"),
-            "is_today": is_today,
-            "current_hour": local_now_hour if is_today else None,
-            "zones": zone_data
-        }
+    def get_demand_forecast(self, hours: int = 12):
+        forecasting_service = ForecastingService(self.db)
+        return forecasting_service.get_demand_forecast(hours=hours)
+
+    def get_demand_history(self, target_date: str = None):
+        forecasting_service = ForecastingService(self.db)
+        return forecasting_service.get_demand_history(target_date=target_date)
+
+    def get_zone_demand_history(self, target_date: str = None):
+        forecasting_service = ForecastingService(self.db)
+        return forecasting_service.get_zone_demand_history(target_date=target_date)
 
