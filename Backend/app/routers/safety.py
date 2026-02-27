@@ -6,7 +6,7 @@ from datetime import datetime
 from app.services.safety_monitoring_service import SafetyMonitoringService
 from app.services.distance_tracking_service import DistanceTrackingService
 from app.core.dependencies import get_current_driver
-from app.schemas.sensor import SensorDataBatch, DistanceStats
+from app.schemas.sensor import SensorDataBatch, DistanceStats, SensorDataBatchResponse
 from app.models.alert import Alert
 from app.models.driver import Driver
 from app.schemas.alert import AlertResponse, AlertAcknowledge
@@ -15,7 +15,7 @@ from sqlalchemy import desc
 
 router = APIRouter()
 
-@router.post("/sensor-data")
+@router.post("/sensor-data", response_model=SensorDataBatchResponse)
 def submit_sensor_data(
     sensor_batch: SensorDataBatch,
     current_driver = Depends(get_current_driver),
@@ -34,14 +34,15 @@ def submit_sensor_data(
         location_data=sensor_batch.location_data
     )
 
-    return {
-        "status": "processed",
-        "record_id": results["record_id"],
-        "fatigue_score": results["fatigue_analysis"].fatigue_score if results["fatigue_analysis"] else None,
-        "movement_risk": results["movement_analysis"].risk_level if results["movement_analysis"] else None,
-        "alerts_generated": len(results["alerts"]),
-        "recommendation": results["fatigue_analysis"].recommendation if results["fatigue_analysis"] else "Keep driving safely."
-    }
+    return SensorDataBatchResponse (
+        status="processed",
+        record_id=results["record_id"],
+        fatigue_score=results["fatigue_analysis"].fatigue_score if results["fatigue_analysis"] else None,
+        movement_risk=results["movement_analysis"].risk_level if results["movement_analysis"] else None,
+        alerts_generated=len(results["alerts"]),
+        recommendation=results["fatigue_analysis"].recommendation if results["fatigue_analysis"] else "Keep driving safely.",
+        genai_insights=results.get("genai_insights", [])
+    )
 
 @router.get("/distance-stats/{session_id}", response_model=DistanceStats)
 def get_distance_stats(
