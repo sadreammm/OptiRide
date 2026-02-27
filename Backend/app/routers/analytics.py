@@ -7,6 +7,7 @@ from app.db.database import get_db
 from app.core.dependencies import get_current_admin, get_current_user
 from app.models.user import User
 from app.services.analytics_service import AnalyticsService
+from app.services.genai_service import GenAIService
 from app.schemas.analytics import (
     DashboardOverview, RealtimeMetrics, ZoneHeatmap,
     TrendData, ReportRequest, ReportResponse, PerformanceAnalysis,
@@ -113,6 +114,22 @@ def get_driver_analytics_summary(
         "metrics": metrics
     }
 
+@router.get("/drivers/{driver_id}/insights")
+def get_driver_genai_insights(
+    driver_id: str,
+    period: str = Query("this_month", description="Period: today, last_7_days, this_month"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    analytics_service = AnalyticsService(db)
+    start_date, end_date = analytics_service._get_date_range(period)
+    metrics = analytics_service._calculate_driver_metrics(driver_id, start_date, end_date)
+    insights = GenAIService.generate_driver_insights(metrics)
+    return {
+        "driver_id": driver_id,
+        "period": period,
+        "insights": insights
+    }
 
 @router.get("/zones/{zone_id}/summary")
 def get_zone_analytics_summary(
