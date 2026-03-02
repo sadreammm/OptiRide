@@ -482,6 +482,34 @@ export const useDriverAnalyticsSummary = (driverId, period = 'this_month') => {
     return { data, loading, error, refetch: fetchSummary };
 };
 
+export const useDriverInsights = (driverId, period = 'this_month') => {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const fetchInsights = useCallback(async () => {
+        if (!driverId) {
+            setLoading(false);
+            return;
+        }
+        try {
+            setLoading(true);
+            const result = await analyticsService.getDriverInsights(driverId, period);
+            setData(result);
+            setError(null);
+        }
+        catch (err) {
+            setError(err);
+        }
+        finally {
+            setLoading(false);
+        }
+    }, [driverId, period]);
+    useEffect(() => {
+        fetchInsights();
+    }, [fetchInsights]);
+    return { data, loading, error, refetch: fetchInsights };
+};
+
 export const useZoneAnalyticsSummary = (zoneId, period = 'this_month') => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);

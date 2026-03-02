@@ -70,6 +70,16 @@ export const analyticsService = {
             throw handleApiError(error);
         }
     },
+    async getDriverInsights(driverId, period = 'this_month') {
+        try {
+            const response = await apiClient.get(`/analytics/drivers/${driverId}/insights`, {
+                params: { period }
+            });
+            return response.data;
+        } catch (error) {
+            throw handleApiError(error);
+        }
+    },
     async getDriverSummary(driverId, period = 'this_month') {
         try {
             const response = await apiClient.get(`/analytics/drivers/${driverId}/summary`, {

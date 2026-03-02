@@ -31,6 +31,8 @@ from app.schemas.alert import AlertCreate, AlertType, AlertSeverity
 from app.services.genai_service import GenAIService
 from app.core.kafka import kafka_producer
 from app.core.socket_manager import socket_manager, emit_sync
+import redis
+from app.core.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 active_emergencies = {}

@@ -13,7 +13,8 @@ from app.models.driver import Driver
 from app.models.alert import Alert
 from app.models.zone import Zone
 from app.services.forecasting_service import ForecastingService
-
+from app.services.genai_service import GenAIService
+from app.services.driver_service import DriverService
 from app.schemas.alert import AlertSeverity
 from app.schemas.driver import DriverStatus, DutyStatus
 from app.schemas.order import OrderStatus
@@ -903,3 +904,21 @@ class AnalyticsService:
             drivers_at_risk=drivers_at_risk[:3],
             weather_impacts=weather_impacts
         )
+
+    def get_driver_insights(self, driver_id: str) -> List[str]:
+        driver_service = DriverService(self.db)
+        stats = driver_service.get_performance_stats(driver_id)
+        
+        metrics = {
+            "driver_id": driver_id,
+            "orders_completed": stats.today_orders,
+            "orders_cancelled": stats.total_assigned - stats.total_orders if stats.total_assigned > stats.total_orders else 0,
+            "total_earnings": stats.today_earnings,
+            "total_distance": stats.today_distance,
+            "safety_alerts": stats.today_safety_alerts,
+            "safety_score": stats.today_safety_score,
+            "avg_30d_safety_score": stats.avg_30d_safety_score,
+            "total_30d_alerts": stats.total_30d_alerts
+        }
+        
+        return GenAIService.generate_driver_insights(metrics)

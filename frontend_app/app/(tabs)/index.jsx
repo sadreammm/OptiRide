@@ -3,7 +3,6 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { theme } from "@/constants/theme";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { zones } from "@/mocks/zones";
 import { fetchDriverProfile, fetchDriverPerformanceStats } from "@/services/driver";
 import { useRouter } from "expo-router";
 import {
@@ -29,11 +28,11 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 // Only import react-native-maps on native platforms
-let MapView, Polygon, PROVIDER_DEFAULT;
+let MapView, Marker, PROVIDER_DEFAULT;
 if (Platform.OS !== 'web') {
   const Maps = require('react-native-maps');
   MapView = Maps.default;
-  Polygon = Maps.Polygon;
+  Marker = Maps.Marker;
   PROVIDER_DEFAULT = Maps.PROVIDER_DEFAULT;
 }
 
@@ -57,6 +56,16 @@ export default function HomeScreen() {
     type: "Morning",
     start: "09:00",
     end: "17:00",
+  };
+
+  // Helper to format zone ID (e.g. "zone_jumeirah" → "Jumeirah")
+  const formatZoneName = (zoneId) => {
+    if (!zoneId) return "Unknown";
+    return zoneId
+      .replace(/^zone_/, "")
+      .split("_")
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
   };
 
   // Helper to format time from 24h ("09:00") to 12h ("9:00 AM")
@@ -106,8 +115,8 @@ export default function HomeScreen() {
   };
 
   const currentZoneCode = driverProfile?.current_zone || "A1";
-  const currentZone = zones.find((z) => z.code === currentZoneCode);
-  const reassignedZone = reassignedZoneId ? zones.find((z) => z.code === reassignedZoneId) : null;
+  const currentZoneName = formatZoneName(currentZoneCode);
+  const reassignedZoneName = reassignedZoneId ? formatZoneName(reassignedZoneId) : null;
 
   // Today's stats
   const todaysDeliveries = performanceStats?.today_orders || 0;
@@ -206,13 +215,13 @@ export default function HomeScreen() {
             </View>
             <View style={styles.zoneContent}>
               <View style={styles.zoneInfo}>
-                <Text style={styles.zoneCode}>{currentZone?.code || currentZoneCode}</Text>
+                <Text style={styles.zoneCode}>{currentZoneCode.replace(/^zone_/, "").toUpperCase()}</Text>
                 <Text style={styles.zoneDescription}>
-                  {currentZone?.description || "Loading zone..."} {/* HARDCODED: Zone description */}
+                  {currentZoneName}
                 </Text>
                 <StatusBadge
-                  status={currentZone?.demand || "low"} // HARDCODED: Demand level
-                  label={`${currentZone?.demand || "low"} demand`}
+                  status="low"
+                  label="low demand"
                 />
               </View>
               <View style={styles.mapPreview}>
@@ -221,8 +230,8 @@ export default function HomeScreen() {
                     provider="google"
                     style={styles.miniMap}
                     initialRegion={{
-                      latitude: currentZone?.coordinates[0].latitude || 25.2048,
-                      longitude: currentZone?.coordinates[0].longitude || 55.2708,
+                      latitude: driverProfile?.latitude || 25.2048,
+                      longitude: driverProfile?.longitude || 55.2708,
                       latitudeDelta: 0.02,
                       longitudeDelta: 0.02,
                     }}
@@ -231,14 +240,13 @@ export default function HomeScreen() {
                     pitchEnabled={false}
                     rotateEnabled={false}
                   >
-                    {currentZone && (
-                      <Polygon
-                        coordinates={currentZone.coordinates}
-                        fillColor={`${currentZone.color}40`}
-                        strokeColor={currentZone.color}
-                        strokeWidth={2}
-                      />
-                    )}
+                    <Marker
+                      coordinate={{
+                        latitude: driverProfile?.latitude || 25.2048,
+                        longitude: driverProfile?.longitude || 55.2708,
+                      }}
+                      pinColor={theme.colors.primary}
+                    />
                   </MapView>
                 ) : (
                   <View style={styles.webMapPlaceholder}>
@@ -250,7 +258,7 @@ export default function HomeScreen() {
           </Card>
         </TouchableOpacity>
 
-        {reassignedZone && (
+        {reassignedZoneId && (
           <TouchableOpacity
             onPress={() => router.push({
               pathname: '/zone-change',
@@ -264,15 +272,15 @@ export default function HomeScreen() {
                 <Text style={styles.zoneTitle}>Zone Reassignment</Text>
               </View>
               <View style={styles.assignedContent}>
-                <Text style={styles.assignedZoneCode}>{reassignedZone.code}</Text>
+                <Text style={styles.assignedZoneCode}>{reassignedZoneName}</Text>
                 <StatusBadge
-                  status={reassignedZone.demand || "high"}
-                  label={`${reassignedZone.demand || 'high'} demand - Reassigned`}
+                  status="high"
+                  label="high demand - Reassigned"
                 />
               </View>
               <Text style={styles.assignedNote}>
                 Due to high demand, you have been reassigned to Zone{" "}
-                {reassignedZone.code}. Tap to navigate.
+                {reassignedZoneName}. Tap to navigate.
               </Text>
             </Card>
           </TouchableOpacity>

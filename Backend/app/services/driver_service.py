@@ -18,6 +18,7 @@ from app.schemas.driver import (
     ShiftStart, ShiftEnd, ShiftSummary, BreakRequest, DriverStatus, DutyStatus, TelemetryUpdate
 )
 from app.services.allocation_service import AllocationService
+from app.services.distance_tracking_service import DistanceTrackingService
 
 
 class DriverService:
@@ -397,12 +398,8 @@ class DriverService:
             Order.created_at >= today_start
         ).count()
         
-        # Today's distance (from delivered orders)
-        today_distance = self.db.query(func.sum(Order.distance_km)).filter(
-            Order.driver_id == driver.driver_id,
-            Order.status == 'delivered',
-            Order.delivered_at >= today_start
-        ).scalar() or 0.0
+        distance_service = DistanceTrackingService(self.db)
+        today_distance = distance_service.get_today_distance(driver.driver_id)
         
         # Today's earnings calculation:
         # - 5 AED base fee per delivery
@@ -570,6 +567,7 @@ class DriverService:
             current_fatigue_score=current_fatigue,
             # Lifetime stats
             total_orders=total_orders,
+            total_assigned=total_assigned,
             total_breaks=total_breaks,
             total_distance=round(total_distance, 2),
             average_rating=driver.rating or 0.0,

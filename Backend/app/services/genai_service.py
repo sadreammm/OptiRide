@@ -210,19 +210,23 @@ class GenAIService:
 
             Analyze this driver's performance metrics and provide 1-2 concise, actionable insights for the fleet manager.
 
-            Driver Metrics:
+            Driver Metrics (Today):
             - Orders Completed: {metrics.get('orders_completed', 0)}
-            - Orders Cancelled: {metrics.get('orders_cancelled', 0)}
             - Total Earnings: AED {metrics.get('total_earnings', 0):.2f}
             - Total Distance: {metrics.get('total_distance', 0):.1f} km
-            - Safety Alerts: {metrics.get('safety_alerts', 0)}
-            - Safety Score: {metrics.get('safety_score', 100)}/100
+            - Safety Alerts (Today): {metrics.get('safety_alerts', 0)}
+            - Safety Score (Today): {metrics.get('safety_score', 100)}/100
+
+            Historical Context (Last 30 Days):
+            - Average Safety Score: {metrics.get('avg_30d_safety_score', 100)}/100
+            - Total Safety Alerts: {metrics.get('total_30d_alerts', 0)}
 
             Rules:
             1. Be direct and operational. No markdown, no bullet points, no numbering.
             2. START directly with the first insight. No intro phrases.
             3. Separate multiple insights with a newline.
-            4. Focus on the most critical issue first (safety > performance > earnings).
+            4. Focus on the most critical issue first (Today's safety > 30d safety trend > performance > earnings).
+            5. If today's safety is significantly worse than the 30-day average, highlight the sudden decline.
             """
             response = model.generate_content(prompt)
             text = response.text.strip()

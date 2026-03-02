@@ -138,6 +138,7 @@ class DriverPerformanceStats(BaseModel):
     
     # Lifetime/overall stats
     total_orders : int
+    total_assigned : int = 0
     total_breaks : int = 0  # Lifetime breaks taken
     total_distance : float = 0.0  # Lifetime distance in km
     average_rating : float

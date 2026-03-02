@@ -117,17 +117,13 @@ def get_driver_analytics_summary(
 @router.get("/drivers/{driver_id}/insights")
 def get_driver_genai_insights(
     driver_id: str,
-    period: str = Query("this_month", description="Period: today, last_7_days, this_month"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
     analytics_service = AnalyticsService(db)
-    start_date, end_date = analytics_service._get_date_range(period)
-    metrics = analytics_service._calculate_driver_metrics(driver_id, start_date, end_date)
-    insights = GenAIService.generate_driver_insights(metrics)
+    insights = analytics_service.get_driver_insights(driver_id=driver_id)
     return {
         "driver_id": driver_id,
-        "period": period,
         "insights": insights
     }
 
@@ -227,4 +223,3 @@ def get_predictive_risks(
 ):
     analytics_service = AnalyticsService(db)
     return analytics_service.get_predictive_risks()
-

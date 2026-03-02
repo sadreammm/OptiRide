@@ -40,13 +40,15 @@ def submit_sensor_data(
         location_data=sensor_batch.location_data
     )
 
+    recommendation = results.get("genai_insights", [])[0] if results.get("genai_insights") else results["fatigue_analysis"].recommendation if results["fatigue_analysis"] else "Keep driving safely."
+
     return SensorDataBatchResponse (
         status="processed",
         record_id=results["record_id"],
         fatigue_score=results["fatigue_analysis"].fatigue_score if results["fatigue_analysis"] else None,
         movement_risk=results["movement_analysis"].risk_level if results["movement_analysis"] else None,
         alerts_generated=len(results["alerts"]),
-        recommendation=results["fatigue_analysis"].recommendation if results["fatigue_analysis"] else "Keep driving safely.",
+        recommendation=recommendation,
         genai_insights=results.get("genai_insights", [])
     )
 

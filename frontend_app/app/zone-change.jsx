@@ -4,27 +4,22 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { theme } from '@/constants/theme';
-import { zones } from '@/mocks/zones';
+// Format zone name for display (e.g. "zone_dubai_marina" → "Dubai Marina")
+const formatZoneName = (id) => {
+  if (!id) return 'Unknown';
+  return id
+    .replace(/^zone_/, '')
+    .split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+};
 
 export default function ZoneChangeScreen() {
   const router = useRouter();
   const { zoneId } = useLocalSearchParams();
 
-  // Try to match by code or id; fallback to displaying the zone ID directly
-  const matchedZone = zones.find(z => z.code === zoneId || z.id === zoneId);
-
-  // Format zone name for display (e.g. "zone_dubai_marina" → "Dubai Marina")
-  const formatZoneName = (id) => {
-    if (!id) return 'Unknown';
-    return id
-      .replace(/^zone_/, '')
-      .split('_')
-      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-      .join(' ');
-  };
-
-  const zoneName = matchedZone?.name || formatZoneName(zoneId);
-  const zoneCode = matchedZone?.code || zoneId;
+  const zoneName = formatZoneName(zoneId);
+  const zoneCode = zoneId?.replace(/^zone_/, '').toUpperCase() || zoneId;
 
   return (
     <View style={styles.container}>

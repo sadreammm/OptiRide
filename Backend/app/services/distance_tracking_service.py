@@ -8,6 +8,8 @@ from app.models.driver import Driver
 from app.schemas.sensor import LocationData, DistanceStats
 from geoalchemy2.functions import ST_Distance, ST_MakePoint, ST_SetSRID, ST_Transform
 from geoalchemy2.elements import WKTElement
+import redis
+from app.core.redis_client import redis_client
 
 class DistanceTrackingService:
     def __init__(self, db: Session):
@@ -39,6 +41,20 @@ class DistanceTrackingService:
         driver = self.db.query(Driver).filter(Driver.driver_id == driver_id).first()
         if driver:
             driver.location = new_location_wkt
+            if location_data.speed is not None:
+                driver.current_speed = location_data.speed
+            if location_data.heading is not None:
+                driver.heading = location_data.heading
+
+            # Throttling logic using Redis (30s TTL)
+            throttle_key = f"driver_telemetry_throttle:{driver_id}"
+            try:
+                is_throttled = redis_client.get(throttle_key)
+                if not is_throttled:
+                    self.db.commit()
+                    redis_client.setex(throttle_key, 30, "1")
+            except redis.exceptions.ConnectionError:
+                self.db.commit()
 
         gps_track = GPSTrack(
             driver_id=driver_id,
@@ -93,10 +109,10 @@ class DistanceTrackingService:
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
         result = self.db.query(
-            func.max(GPSTrack.cumulative_distance)
+            func.sum(GPSTrack.distance_from_last)
         ).filter(
             GPSTrack.driver_id == driver_id,
             GPSTrack.recorded_at >= today_start
         ).scalar()
 
-        return result if result else 0.0
+        return round(float(result), 2) if result else 0.0

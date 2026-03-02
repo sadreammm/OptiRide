@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, } from "@/components/ui/dialog";
 import { DriverChatDialog } from "@/components/shared/DriverChatDialog";
-import { useDrivers, usePolling, useDriverPerformanceStats, useReallocateDriver, useAllocationStatus, useManualAllocate, useInitialAllocation } from "@/utils/hooks/use-api";
+import { useDrivers, usePolling, useDriverPerformanceStats, useReallocateDriver, useAllocationStatus, useManualAllocate, useInitialAllocation, useDriverInsights } from "@/utils/hooks/use-api";
 import { toast } from "sonner";
 
 
@@ -69,6 +69,7 @@ export function DriverMonitoring() {
   const { data: allocationData } = useAllocationStatus();
   const { manualAllocate, loading: isManualAllocating } = useManualAllocate();
   const { initialAllocation, loading: isInitialAllocating } = useInitialAllocation();
+  const { data: aiInsights, loading: isAiLoading } = useDriverInsights(selectedDriver?.driver_id);
 
   const handleInitialAllocation = async () => {
     try {
@@ -463,28 +464,29 @@ export function DriverMonitoring() {
               </div>
             </Card>
 
-            {/* AI Recommendations */}
             <Card className="p-4 bg-primary/10 border-primary/20">
               <h4 className="text-foreground mb-3 flex items-center gap-2">
                 <Activity className="w-4 h-4 text-primary" />
                 AI-Generated Recommendations
               </h4>
               <div className="space-y-2">
-                {selectedDriver.fatigue_score >= 0.8 && (<div className="p-3 bg-card rounded border border-destructive/20">
-                  <p className="text-destructive">⚠️ Driver has shown critical fatigue levels. Recommend immediate 20-minute break.</p>
-                </div>)}
-                {selectedDriver.fatigue_score >= 0.65 && selectedDriver.fatigue_score < 0.8 && (<div className="p-3 bg-card rounded border border-warning/20">
-                  <p className="text-warning">⚠️ Driver has shown increased fatigue in the past hour. Recommend a 10-minute break.</p>
-                </div>)}
-                {(selectedDriver.battery_level ?? 100) < 40 && (<div className="p-3 bg-card rounded border border-warning/20">
-                  <p className="text-warning">🔋 Low battery detected. Suggest driver charges device during next break.</p>
-                </div>)}
-                {!selectedDriver.camera_active && (<div className="p-3 bg-card rounded border border-destructive/20">
-                  <p className="text-destructive">📷 Camera is inactive. Safety monitoring may be compromised.</p>
-                </div>)}
-                {selectedDriver.idleTime?.includes("hr") && (<div className="p-3 bg-card rounded border border-primary/20">
-                  <p className="text-primary">💡 Driver is consistently staying in low-demand areas. Suggest relocating to Zone A3.</p>
-                </div>)}
+                {isAiLoading ? (
+                  <p className="text-xs text-muted-foreground animate-pulse">Consulting GenAI advisor...</p>
+                ) : aiInsights?.insights && aiInsights.insights.length > 0 ? (
+                  aiInsights.insights.map((insight, idx) => (
+                    <div key={idx} className="p-3 bg-card rounded border border-primary/20">
+                      <p className="text-primary text-sm flex items-start gap-2">
+                        <span className="mt-1">💡</span>
+                        {insight}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-3 bg-card rounded border border-muted">
+                    <p className="text-muted-foreground text-sm">No critical performance issues detected by AI.</p>
+                  </div>
+                )}
+
               </div>
             </Card>
 
