@@ -328,20 +328,17 @@ class GenAIService:
         if driver_id not in cls._safety_cache or driver_id not in cls._safety_last_time:
             return False
             
-        # Shorter TTL for real-time safety insights (5 minutes)
         elapsed = datetime.utcnow() - cls._safety_last_time[driver_id]
         if elapsed > timedelta(minutes=5):
             return False
             
         last = cls._safety_last_input.get(driver_id, {})
         
-        # Invalidate if any major event changes
         critical_fields = ['sudden_impact', 'fatigue_alert_level', 'movement_risk_level']
         for field in critical_fields:
             if last.get(field) != current_data.get(field):
                 return False
                 
-        # Fatigue score change check
         if abs(float(last.get('fatigue_score', 0)) - float(current_data.get('fatigue_score', 0))) > 0.1:
             return False
             
