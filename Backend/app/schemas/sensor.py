@@ -65,6 +65,12 @@ class SensorDataBatchResponse(BaseModel):
     record_id: str
     fatigue_score: Optional[float] = None
     movement_risk: Optional[str] = None
+    crash_probability: Optional[float] = None
+    crash_action: Optional[str] = None
+    crash_fuzzy: Optional[float] = None
+    fall_probability: Optional[float] = None
+    fall_action: Optional[str] = None
+    fall_fuzzy: Optional[float] = None
     alerts_generated: int
     recommendation: str
     genai_insights: List[str] = []

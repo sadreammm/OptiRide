@@ -40,17 +40,20 @@ def submit_sensor_data(
         location_data=sensor_batch.location_data
     )
 
-    recommendation = results.get("genai_insights", [])[0] if results.get("genai_insights") else results["fatigue_analysis"].recommendation if results["fatigue_analysis"] else "Keep driving safely."
-
-    return SensorDataBatchResponse (
-        status="processed",
-        record_id=results["record_id"],
-        fatigue_score=results["fatigue_analysis"].fatigue_score if results["fatigue_analysis"] else None,
-        movement_risk=results["movement_analysis"].risk_level if results["movement_analysis"] else None,
-        alerts_generated=len(results["alerts"]),
-        recommendation=recommendation,
-        genai_insights=results.get("genai_insights", [])
-    )
+    return {
+        "status": "processed",
+        "record_id": results["record_id"],
+        "fatigue_score": results["fatigue_analysis"].fatigue_score if results["fatigue_analysis"] else None,
+        "movement_risk": results["movement_analysis"].risk_level if results["movement_analysis"] else None,
+        "crash_probability": results.get("risk_analysis", {}).get("crash_probability"),
+        "crash_action": results.get("risk_analysis", {}).get("crash_action"),
+        "crash_fuzzy": results.get("risk_analysis", {}).get("crash_fuzzy"),
+        "fall_probability": results.get("risk_analysis", {}).get("fall_probability"),
+        "fall_action": results.get("risk_analysis", {}).get("fall_action"),
+        "fall_fuzzy": results.get("risk_analysis", {}).get("fall_fuzzy"),
+        "alerts_generated": len(results["alerts"]),
+        "recommendation": results["fatigue_analysis"].recommendation if results["fatigue_analysis"] else "Keep driving safely."
+    }
 
 @router.get("/distance-stats/{session_id}", response_model=DistanceStats)
 def get_distance_stats(

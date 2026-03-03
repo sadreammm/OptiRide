@@ -66,6 +66,7 @@ export function SensorProvider({ children }) {
     // Event flags
     const [lastAlert, setLastAlert] = useState(null);
     const [safetyScore, setSafetyScore] = useState(100);
+    const [riskPrediction, setRiskPrediction] = useState(null);
 
     // Data buffers for batching
     const accelerometerBuffer = useRef([]);
@@ -572,17 +573,81 @@ export function SensorProvider({ children }) {
 
         try {
             const result = await submitSensorData(token, batch);
+
+            const crashProbability = result?.crash_probability ?? 0;
+            const fallProbability = result?.fall_probability ?? 0;
+            const crashAction = result?.crash_action || "LOG/OBSERVE";
+            const fallAction = result?.fall_action || "LOG/OBSERVE";
+
+            setRiskPrediction({
+                crashProbability,
+                crashAction,
+                crashFuzzy: result?.crash_fuzzy ?? 0,
+                fallProbability,
+                fallAction,
+                fallFuzzy: result?.fall_fuzzy ?? 0,
+                movementRisk: result?.movement_risk || null,
+                fatigueScore: result?.fatigue_score ?? null,
+                recommendation: result?.recommendation || null,
+                timestamp: new Date(),
+            });
+
             if (result.fatigue_score !== null) {
                 const newScore = Math.max(0, 100 - (result.fatigue_score * 100));
                 setSafetyScore(Math.round(newScore));
             }
+
+            if (crashAction === "ESCALATE") {
+                setLastAlert({
+                    type: "CRASH_RISK_ESCALATE",
+                    severity: "critical",
+                    riskType: "CRASH",
+                    riskAction: "ESCALATE",
+                    timestamp: new Date(),
+                });
+                router.push('/fall-detection');
+            } else if (crashAction === "WARN") {
+                setLastAlert({
+                    type: "CRASH_RISK_WARN",
+                    severity: "warning",
+                    riskType: "CRASH",
+                    riskAction: "WARN",
+                    timestamp: new Date(),
+                });
+            } else if (fallAction === "ESCALATE") {
+                setLastAlert({
+                    type: "FALL_RISK_ESCALATE",
+                    severity: "critical",
+                    riskType: "FALL",
+                    riskAction: "ESCALATE",
+                    timestamp: new Date(),
+                });
+                router.push('/fall-detection');
+            } else if (fallAction === "WARN") {
+                setLastAlert({
+                    type: "FALL_RISK_WARN",
+                    severity: "warning",
+                    riskType: "FALL",
+                    riskAction: "WARN",
+                    timestamp: new Date(),
+                });
+            } else {
+                setLastAlert({
+                    type: "RISK_OBSERVE",
+                    severity: "low",
+                    riskType: "CRASH/FALL",
+                    riskAction: "OBSERVE",
+                    timestamp: new Date(),
+                });
+            }
+
             accelerometerBuffer.current = [];
             gyroscopeBuffer.current = [];
             console.log("Safety sensor batch sent:", result);
         } catch (error) {
             console.warn("Failed to send sensor batch:", error.message);
         }
-    }, [token, user, locationData]);
+    }, [token, user, locationData, router]);
 
     // Allows the app to periodically provide a camera frame for real-time fatigue analysis
     const updateCameraFrame = useCallback((base64Frame) => {
@@ -639,6 +704,7 @@ export function SensorProvider({ children }) {
         cameraActive,
         lastAlert,
         safetyScore,
+        riskPrediction,
         startMonitoring,
         stopMonitoring,
         toggleOnline,

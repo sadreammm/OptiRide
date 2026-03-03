@@ -2,6 +2,7 @@ import { Card } from "@/components/Card";
 import { theme } from "@/constants/theme";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSensors } from "@/contexts/SensorContext";
 import { getAlerts, acknowledgeAlert } from "@/services/safety";
 import { useRouter } from "expo-router";
 import {
@@ -41,6 +42,7 @@ export default function AlertsScreen() {
   const router = useRouter();
   const { isDarkMode } = useTheme();
   const { token } = useAuth();
+  const { riskPrediction } = useSensors();
 
   const [alerts, setAlerts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -48,6 +50,16 @@ export default function AlertsScreen() {
   const [error, setError] = useState(null);
 
   const bgColor = isDarkMode ? "#111827" : "#F9FAFB";
+
+  const getDominantRiskType = (prediction) => {
+    if (!prediction) return "NONE";
+
+    const crashP = Number(prediction.crashProbability || 0);
+    const fallP = Number(prediction.fallProbability || 0);
+
+    if (crashP <= 0 && fallP <= 0) return "NONE";
+    return crashP >= fallP ? "CRASH" : "FALL";
+  };
 
   const fetchAlerts = useCallback(async () => {
     if (!token) return;
@@ -148,6 +160,13 @@ export default function AlertsScreen() {
   };
 
   const getAlertColor = (severity) => {
+    const normalized = typeof severity === "number" ? severity : String(severity || "").toLowerCase();
+
+    if (normalized === 4 || normalized === "critical") return theme.colors.error;
+    if (normalized === 3 || normalized === "high" || normalized === "warning") return "#F97316";
+    if (normalized === 2 || normalized === "medium" || normalized === "moderate") return theme.colors.warning;
+    if (normalized === 1 || normalized === "low") return theme.colors.success;
+
     switch (severity) {
       case "critical":
         return theme.colors.error;
@@ -160,6 +179,16 @@ export default function AlertsScreen() {
       default:
         return theme.colors.accent;
     }
+  };
+
+  const getSeverityLabel = (severity) => {
+    if (typeof severity === "number") {
+      if (severity >= 4) return "critical";
+      if (severity >= 3) return "warning";
+      if (severity >= 2) return "moderate";
+      return "low";
+    }
+    return String(severity || "info");
   };
 
   const getAlertTitle = (type) => {
@@ -259,6 +288,20 @@ export default function AlertsScreen() {
             <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
           }
         >
+          {riskPrediction && (
+            <Card style={styles.riskCard}>
+              <View style={styles.riskHeader}>
+                <Text style={styles.riskTitle}>Crash/Fall Status</Text>
+                <Text style={styles.alertTimestamp}>{formatTimestamp(riskPrediction.timestamp)}</Text>
+              </View>
+
+              <View style={styles.riskRow}>
+                <Text style={styles.riskLabel}>Current Likely Event</Text>
+                <Text style={styles.riskValue}>{getDominantRiskType(riskPrediction)}</Text>
+              </View>
+            </Card>
+          )}
+
           {alerts.length === 0 ? (
             <View style={styles.emptyContainer}>
               <BellIcon size={48} color={theme.colors.textSecondary} />
@@ -307,7 +350,7 @@ export default function AlertsScreen() {
                               { color: getAlertColor(alert.severity) },
                             ]}
                           >
-                            {alert.severity}
+                            {getSeverityLabel(alert.severity)}
                           </Text>
                         </View>
                       </View>
@@ -416,6 +459,37 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: theme.spacing.md,
     paddingBottom: theme.spacing.xl,
+  },
+  riskCard: {
+    marginBottom: theme.spacing.md,
+    borderLeftWidth: 4,
+    borderLeftColor: theme.colors.primary,
+  },
+  riskHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: theme.spacing.sm,
+  },
+  riskTitle: {
+    fontSize: theme.fontSize.base,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+  riskRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: theme.spacing.xs,
+  },
+  riskLabel: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.textSecondary,
+  },
+  riskValue: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
+    color: theme.colors.text,
   },
   alertCard: {
     marginBottom: theme.spacing.md,
