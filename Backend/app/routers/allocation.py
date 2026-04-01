@@ -5,6 +5,7 @@ from typing import List, Optional
 from app.db.database import get_db
 from app.core.dependencies import get_current_admin
 from app.services.allocation_service import AllocationService
+from ml.zone_clustering import ZoneClusteringService
 
 router = APIRouter()
 
@@ -52,3 +53,9 @@ def reallocate_single_driver(
 def get_allocation_status(db: Session = Depends(get_db), admin = Depends(get_current_admin)):
     service = AllocationService(db)
     return service.get_current_allocation_status()
+
+@router.post("/zones/recalculate")
+def recalculate_zones(db: Session = Depends(get_db), admin = Depends(get_current_admin)):
+    service = ZoneClusteringService(db, max_distance_km=1.0, min_samples=3, lookback_days=7)
+    result = service.generate_zones()
+    return result

@@ -1,6 +1,24 @@
 version: '3.8'
 
 services:
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: optiride-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-optiride}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: optiride-redis
+    ports:
+      - "6379:6379"
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: zookeeper
@@ -27,3 +45,35 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
+  backend:
+    build: ./Backend
+    container_name: optiride-backend
+    depends_on:
+      - db
+      - redis
+      - kafka
+    ports:
+      - "8000:8000"
+    environment:
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-optiride}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      FIREBASE_CREDENTIALS_PATH: serviceAccount.json
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+
+  admin-dashboard:
+    build: ./AdminDashboard
+    container_name: optiride-admin
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+
+volumes:
+  postgres_data:

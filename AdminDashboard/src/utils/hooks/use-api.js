@@ -264,6 +264,29 @@ export const usePendingOrders = (zoneId) => {
     }, [fetchPending]);
     return { data, loading, error, refetch: fetchPending };
 };
+export const useActiveOrderLocations = () => {
+    const [data, setData] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const fetchLocations = useCallback(async () => {
+        try {
+            setLoading(true);
+            const result = await orderService.getActiveOrderLocations();
+            setData(result);
+            setError(null);
+        }
+        catch (err) {
+            setError(err);
+        }
+        finally {
+            setLoading(false);
+        }
+    }, []);
+    useEffect(() => {
+        fetchLocations();
+    }, [fetchLocations]);
+    return { data, loading, error, refetch: fetchLocations };
+};
 export const useOrderStats = (startDate, endDate) => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);

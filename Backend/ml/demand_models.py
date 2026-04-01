@@ -4,8 +4,6 @@ from datetime import datetime
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
-from statsmodels.tsa.arima.model import ARIMA
-from prophet import Prophet
 import joblib
 from typing import Dict, Tuple, Any
 import warnings
@@ -191,45 +189,4 @@ class DemandForecaster:
         feature_path = f'{path}/feature_columns.pkl'
         if os.path.exists(feature_path):
             self.feature_columns = joblib.load(feature_path)
-
-
-class TimeSeriesForecaster:
-    def __init__(self):
-        self.arima_model = None
-        self.prophet_model = None
-    
-    def train_arima(self, df: pd.DataFrame, order=(2,1,2)):
-        ts = df['demand'].asfreq('h', fill_value=0)
-
-        model = ARIMA(ts, order=order)
-        self.arima_model = model.fit()
-
-    def train_prophet(self, df: pd.DataFrame):
-        prophet_df = df.reset_index()
-        prophet_df = prophet_df.rename(columns={'timestamp': 'ds', 'demand':'y'})
-
-        model = Prophet(
-            yearly_seasonality=True,
-            weekly_seasonality=True,
-            daily_seasonality=True
-        )
-        model.add_seasonality(name='hourly', period=1, fourier_order=8)
-
-        model.fit(prophet_df)
-        self.prophet_model = model
-
-    def predict_arima(self, steps: int = 1) -> float:
-        if not self.arima_model:
-            return 0.0
-
-        forecast = self.arima_model.forecast(steps=steps)
-        return max(0, forecast[-1])
-    
-    def predict_prophet(self, future_time: datetime) -> float:
-        if not self.prophet_model:
-            return 0.0
-
-        future_df = pd.DataFrame({'ds': [future_time]})
-        forecast = self.prophet_model.predict(future_df)
-
-        return max(0, forecast['yhat'].values[0])
+

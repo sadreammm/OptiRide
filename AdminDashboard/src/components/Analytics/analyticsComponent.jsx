@@ -597,7 +597,7 @@ export function Analytics() {
         {/* Zone-wise Demand Chart — ML-Predicted */}
         <Card className="p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-foreground">Zone-wise Demand — ML Predicted</h3>
+            <h3 className="text-foreground">Zone-wise Demand</h3>
             <select
               value={selectedZone || ''}
               onChange={(e) => setSelectedZone(e.target.value || null)}

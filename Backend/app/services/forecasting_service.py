@@ -7,6 +7,7 @@ import numpy as np
 import os
 
 from app.models.zone import Zone, DemandForecast, DemandPattern
+
 from app.models.order import Order
 from app.models.driver import Driver
 from app.schemas.driver import DriverStatus
@@ -14,7 +15,7 @@ from app.schemas.order import OrderStatus
 from app.schemas.analytics import DemandForecastResponse, DemandForecastPoint
 from app.services.genai_service import GenAIService
 from ml.feature_engineering import FeatureEngineer
-from ml.demand_models import DemandForecaster, TimeSeriesForecaster
+from ml.demand_models import DemandForecaster
 
 class ForecastingService:
     _ml_models_cache = {}
@@ -25,7 +26,6 @@ class ForecastingService:
         self.db = db
         self.feature_engineer = FeatureEngineer(db)
         self.ml_forecaster = DemandForecaster()
-        self.ts_forecaster = TimeSeriesForecaster()
 
         try:
             self.ml_forecaster.load_models()
@@ -38,7 +38,7 @@ class ForecastingService:
         days_history: int = 60
     ) -> Dict[str, Any]:
 
-        end_date = datetime.now()
+        end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=days_history)
 
         df = self.feature_engineer.create_training_dataset(
@@ -53,8 +53,6 @@ class ForecastingService:
         
         scores = self.ml_forecaster.train_ensemble(df)
 
-        self.ts_forecaster.train_arima(df)
-        self.ts_forecaster.train_prophet(df)
         self.ml_forecaster.save_models(f'ml/models/zone_{zone_id}')
         self._learn_demand_patterns(zone_id, df)
 
@@ -137,21 +135,12 @@ class ForecastingService:
                 features_df = features_df[self.ml_forecaster.feature_columns]
 
                 
-                if method == "ensemble":
-                    ml_pred, ml_conf = self.ml_forecaster.predict_ensemble(features_df)
-                    ts_pred_arima = self.ts_forecaster.predict_arima(steps=minutes_ahead//60 or 1)
-                    ts_pred_prophet = self.ts_forecaster.predict_prophet(forecast_time)
-
-                    final_pred = (ml_pred * 0.5) + (ts_pred_arima * 0.25) + (ts_pred_prophet * 0.25)
-                    confidence = ml_conf
-                    model_used = "ensemble"
-                elif method == "ml_only":
+                if method == "ensemble" or method == "ml_only":
                     final_pred, confidence = self.ml_forecaster.predict_ensemble(features_df)
                     model_used = "ml_ensemble"
                 else:
-                    final_pred = (self.ts_forecaster.predict_arima() + self.ts_forecaster.predict_prophet()) / 2
-                    confidence = 0.75
-                    model_used = "ts_ensemble"
+                    final_pred, confidence = self.ml_forecaster.predict_ensemble(features_df)
+                    model_used = "ml_ensemble"
                 
                 demand_score = min(1.0, final_pred / 2.0)
 
@@ -304,7 +293,7 @@ class ForecastingService:
         for zone_id, hour_bucket, cnt in results:
             if zone_id not in data:
                 data[zone_id] = {}
-            data[zone_id][hour_bucket] = cnt
+            data[zone_id][hour_bucket.replace(tzinfo=None)] = cnt
         return data
 
     def _build_features_fast(self, forecast_time: datetime, zone_demand: dict) -> dict:
@@ -379,6 +368,9 @@ class ForecastingService:
     ) -> dict:
         n = len(forecast_times_utc)
         results = {}
+        
+        now_utc = datetime.utcnow()
+        now_utc_truncated = now_utc.replace(minute=0, second=0, microsecond=0)
 
         for zone_id in zones:
             forecaster = self._get_forecaster(zone_id)
@@ -386,20 +378,56 @@ class ForecastingService:
                 results[zone_id] = [(0.0, 0.0)] * n
                 continue
 
-            zone_demand = demand_data.get(zone_id, {})
+            zone_demand = dict(demand_data.get(zone_id, {}))
+            preds_list = []
+
+            # Split into robust batch processing for the past, and sequential for the future
+            past_fts = []
+            future_fts = []
+            for ft in forecast_times_utc:
+                if ft.replace(minute=0, second=0, microsecond=0) < now_utc_truncated:
+                    past_fts.append(ft)
+                else:
+                    future_fts.append(ft)
 
             try:
-                feature_rows = [self._build_features_fast(ft, zone_demand) for ft in forecast_times_utc]
-                features_df = pd.DataFrame(feature_rows)
+                # 1. High-performance batch prediction for historical data
+                if past_fts:
+                    feature_rows = [self._build_features_fast(ft, zone_demand) for ft in past_fts]
+                    features_df = pd.DataFrame(feature_rows)
+                    for col in forecaster.feature_columns:
+                        if col not in features_df.columns:
+                            features_df[col] = 0
+                    features_df = features_df[forecaster.feature_columns]
+                    
+                    p_arr, c_arr = forecaster.predict_ensemble_batch(features_df)
+                    for p, c in zip(p_arr, c_arr):
+                        preds_list.append((max(0, float(p)), float(c)))
 
-                for col in forecaster.feature_columns:
-                    if col not in features_df.columns:
-                        features_df[col] = 0
-                features_df = features_df[forecaster.feature_columns]
-                
-                preds, confs = forecaster.predict_ensemble_batch(features_df)
-                results[zone_id] = [(max(0, float(p)), float(c)) for p, c in zip(preds, confs)]
+                # 2. Auto-regressive sequential prediction for future data
+                for ft in future_fts:
+                    f = self._build_features_fast(ft, zone_demand)
+                    features_df = pd.DataFrame([f])
+
+                    for col in forecaster.feature_columns:
+                        if col not in features_df.columns:
+                            features_df[col] = 0
+                    features_df = features_df[forecaster.feature_columns]
+                    
+                    p_arr, c_arr = forecaster.predict_ensemble_batch(features_df)
+                    pred_val = max(0, float(p_arr[0]))
+                    conf_val = float(c_arr[0])
+                    
+                    preds_list.append((pred_val, conf_val))
+                    
+                    # Cascade prediction back for auto-regressive lags in the future
+                    ft_truncated = ft.replace(minute=0, second=0, microsecond=0)
+                    if ft_truncated >= now_utc_truncated or ft_truncated not in zone_demand:
+                        zone_demand[ft_truncated] = pred_val
+
+                results[zone_id] = preds_list
             except Exception as e:
+                print(f"Error predicting zone {zone_id}: {e}")
                 results[zone_id] = [(0.0, 0.0)] * n
 
         return results
@@ -457,9 +485,9 @@ class ForecastingService:
         for z in zones:
             preds = zone_preds.get(z)
             if preds and time_index < len(preds):
-                total_sum += round(preds[time_index][0], 0)
+                total_sum += preds[time_index][0]
         
-        return max(0.0, total_sum)
+        return round(max(0.0, total_sum), 0)
 
     def get_demand_forecast(self, hours: int = 12) -> DemandForecastResponse:
         now = datetime.utcnow()
@@ -489,7 +517,7 @@ class ForecastingService:
         
         forecast_times_full = [today_start_utc + timedelta(hours=i) for i in range(distinct_hours)]
 
-        data_start = today_start_utc - timedelta(hours=170)
+        data_start = today_start_utc - timedelta(hours=192)
         data_end = forecast_end
         demand_data = self._prefetch_demand_data(zones, data_start, data_end)
 
@@ -497,14 +525,19 @@ class ForecastingService:
 
         local_now_hour = (now.hour + 4) % 24
         cal_actual = self.db.query(
-            extract('hour', Order.created_at + text("interval '4 hours'")).label('local_hour'),
+            func.date_trunc('hour', Order.created_at).label('utc_hour_bucket'),
             func.count(Order.order_id).label('count')
         ).filter(
             Order.created_at >= today_start_utc,
             Order.created_at < forecast_end,
             Order.pickup_zone.in_(zones)
-        ).group_by(text('local_hour')).all()
-        cal_map = {int(row[0]): row[1] for row in cal_actual}
+        ).group_by(text('utc_hour_bucket')).all()
+        
+        cal_map = {}
+        for row in cal_actual:
+            utc_h = row[0].replace(tzinfo=None).hour
+            local_h = (utc_h + 4) % 24
+            cal_map[local_h] = cal_map.get(local_h, 0) + row[1]
 
         forecast_local_hours = [(ft.hour + 4) % 24 for ft in forecast_times_full]
         zone_preds_by_local = {}
@@ -526,10 +559,7 @@ class ForecastingService:
         overall_peak_val = 0.0
         overall_peak_hour = "00:00"
 
-        try:
-            start_index = forecast_times_full.index(hour_start)
-        except ValueError:
-            start_index = 0
+        start_index = max(0, int((hour_start - today_start_utc).total_seconds() // 3600))
             
         target_times = [hour_start + timedelta(hours=i) for i in range(hours + 1)]
 
@@ -619,14 +649,19 @@ class ForecastingService:
         zones = self._get_all_zones()
 
         hourly_actual = self.db.query(
-            extract('hour', Order.created_at + text("interval '4 hours'")).label('local_hour'),
+            func.date_trunc('hour', Order.created_at).label('utc_hour_bucket'),
             func.count(Order.order_id).label('count')
         ).filter(
             Order.created_at >= target_start_utc,
             Order.created_at < target_end_utc,
             Order.pickup_zone.in_(zones)
-        ).group_by(text('local_hour')).all()
-        actual_map = {int(row[0]): row[1] for row in hourly_actual}
+        ).group_by(text('utc_hour_bucket')).all()
+        
+        actual_map = {}
+        for row in hourly_actual:
+            utc_h = row[0].replace(tzinfo=None).hour
+            local_h = (utc_h + 4) % 24
+            actual_map[local_h] = actual_map.get(local_h, 0) + row[1]
 
         forecast_times = []
         for h in range(24):
@@ -636,7 +671,7 @@ class ForecastingService:
                 ft = ft - timedelta(days=1)
             forecast_times.append(ft)
 
-        data_start = min(forecast_times) - timedelta(hours=170)
+        data_start = min(forecast_times) - timedelta(hours=192)
         data_end = max(forecast_times) + timedelta(hours=1)
         demand_data = self._prefetch_demand_data(zones, data_start, data_end)
 
@@ -668,10 +703,10 @@ class ForecastingService:
         # Recommendations (only for today)
         recommendations = []
         if is_today:
-             # Imminent peak (next 3 hours)
+             # Imminent peak (next 7 hours)
              current_idx = local_now_hour
              imminent_forecasts = []
-             for i in range(4):
+             for i in range(8):
                  idx = (current_idx + i) % 24
                  imminent_forecasts.append(self._aggregate_city_wide_prediction(zone_preds, idx, zones, idx))
              
@@ -772,6 +807,8 @@ class ForecastingService:
 
         demand_data = self._prefetch_demand_data(zones, min(forecast_times) - timedelta(hours=170), max(forecast_times) + timedelta(hours=1))
         zone_preds = self._batch_predict_all_zones(zones, forecast_times, demand_data)
+        
+
 
         combined_actual_map = {}
         for zid, hours in zone_actual_map.items():
@@ -781,11 +818,20 @@ class ForecastingService:
         cal_factor = self._compute_calibration_factor(zone_preds, combined_actual_map, zones, local_now_hour, is_today)
         zone_preds = self._apply_calibration(zone_preds, cal_factor)
 
+        # Create a dictionary mapping zone_id -> {utc_hour: prediction_value} AFTER calibration
+        prediction_map = {}
+        for zone_id, preds in zone_preds.items():
+            prediction_map[zone_id] = {}
+            for i, ft in enumerate(forecast_times):
+                prediction_map[zone_id][ft.hour] = preds[i]
+
         zone_data = []
         for zone_id in zones:
             actual_map = zone_actual_map.get(zone_id, {})
             zone_name = zone_id.replace('zone_', '').replace('_', ' ').title()
-            preds = zone_preds.get(zone_id, [(0, 0)] * 24)
+            
+            # Retrieve map for this specific zone
+            zone_hour_preds = prediction_map.get(zone_id, {})
 
             hourly_data = []
             zone_total_actual = 0
@@ -793,7 +839,12 @@ class ForecastingService:
 
             for h in range(24):
                 hour_label = f"{h:02d}:00"
-                predicted = round(preds[h][0], 0)
+                utc_hour = (h - 4) % 24
+                
+                # Retrieve the prediction explicitly mapped to the generated UTC hour for this local hour
+                pred_tuple = zone_hour_preds.get(utc_hour, (0, 0))
+                predicted = round(pred_tuple[0], 0)
+                
                 actual = actual_map.get(h, 0) if (not is_today or h <= local_now_hour) else None
 
                 if actual is not None:

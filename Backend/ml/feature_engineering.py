@@ -113,10 +113,10 @@ class FeatureEngineer:
         windows = [3, 6, 12, 24]
 
         for window in windows:
-            df[f'demand_rolling_mean_{window}'] = df['demand'].rolling(window=window).mean()
-            df[f'demand_rolling_std_{window}'] = df['demand'].rolling(window=window).std()
-            df[f'demand_rolling_min_{window}'] = df['demand'].rolling(window=window).min()
-            df[f'demand_rolling_max_{window}'] = df['demand'].rolling(window=window).max()
+            df[f'demand_rolling_mean_{window}'] = df['demand'].shift(1).rolling(window=window).mean()
+            df[f'demand_rolling_std_{window}'] = df['demand'].shift(1).rolling(window=window).std()
+            df[f'demand_rolling_min_{window}'] = df['demand'].shift(1).rolling(window=window).min()
+            df[f'demand_rolling_max_{window}'] = df['demand'].shift(1).rolling(window=window).max()
 
         return df
 

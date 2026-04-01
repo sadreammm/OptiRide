@@ -322,17 +322,25 @@ class AnalyticsService:
         ]
 
         weekly_query = self.db.query(
-            func.to_char(Order.created_at, 'Dy').label('day_name'),
             func.date(Order.created_at).label('date'),
             func.count(Order.order_id).label('total_orders'),
             func.sum(case((Order.status == OrderStatus.delivered.value, 1), else_=0)).label('completed_count')
         ).filter(
             Order.created_at >= week_ago
-        ).group_by(text('day_name'), text('date')).order_by(text('date')).all()
+        ).group_by(text('date')).order_by(text('date')).all()
     
+        # Create a map for efficient lookup
+        query_map = {str(r[0]): (r[1], r[2]) for r in weekly_query}
+        
         weekly_stats = []
-        for day_name, _, total, completed in weekly_query:
+        for i in range(8):  # 7 days + current partial day
+            current_date = (week_ago + timedelta(days=i)).date()
+            date_str = str(current_date)
+            day_name = current_date.strftime('%Dy')
+            
+            total, completed = query_map.get(date_str, (0, 0))
             efficiency = round((completed / total) * 100, 1) if total > 0 else 0
+            
             weekly_stats.append({
                 "day": day_name,
                 "total_orders": total,
@@ -508,19 +516,25 @@ class AnalyticsService:
         ]
         
         by_day_query = self.db.query(
-            func.to_char(Alert.timestamp, 'Dy').label('day_name'),
+            func.date(Alert.timestamp).label('date'),
             func.count(Alert.alert_id).label('count')
         ).filter(
             Alert.timestamp >= start_date,
             Alert.timestamp <= end_date
-        ).group_by(text('day_name')).all()
+        ).group_by(text('date')).all()
         
-        day_counts = {row[0]: row[1] for row in by_day_query}
-        days_order = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-        by_day = [
-            AlertDaySummary(day=day, count=day_counts.get(day, 0))
-            for day in days_order
-        ]
+        day_counts = {str(row[0]): row[1] for row in by_day_query}
+        
+        by_day = []
+        for i in range(8):  # Last 7 days + today
+            current_date = (start_date + timedelta(days=i)).date()
+            date_str = str(current_date)
+            day_name = current_date.strftime('%Dy')
+            
+            by_day.append(AlertDaySummary(
+                day=day_name,
+                count=day_counts.get(date_str, 0)
+            ))
         
         by_zone_query = self.db.query(
             Driver.current_zone,
@@ -795,6 +809,8 @@ class AnalyticsService:
                 for d in top_drivers
             ]
         )
+
+
 
     def get_demand_forecast(self, hours: int = 12):
         forecasting_service = ForecastingService(self.db)

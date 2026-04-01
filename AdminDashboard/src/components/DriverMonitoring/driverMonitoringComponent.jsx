@@ -40,14 +40,22 @@ const getFatigueColor = (score) => {
 };
 const formatLastActive = (dateString) => {
   if (!dateString) return "Offline";
-  // Append 'Z' to ensure the Date object treats the backend timestamp as UTC
   const date = new Date(dateString.endsWith('Z') ? dateString : `${dateString}Z`);
   const now = new Date();
-  const diffInSeconds = Math.floor((now - date) / 1000);
 
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  if (date < startOfToday) {
+    const diffInMs = startOfToday - date;
+    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24)) + 1;
+    return `${diffInDays}d ago`;
+  }
+
+  const diffInSeconds = Math.floor((now - date) / 1000);
   if (diffInSeconds < 60) return "Just Now";
   if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 };
 export function DriverMonitoring() {
   const [chatTarget, setChatTarget] = useState(null);
@@ -58,7 +66,7 @@ export function DriverMonitoring() {
   const [page, setPage] = useState(0);
   const limit = 15;
   const [selectedManualZone, setSelectedManualZone] = useState("");
-  // Fetch drivers from API (fetch all for frontend searching)
+
   const { data: driversData, refetch } = useDrivers(0, 500);
 
   usePolling(refetch, 10000);
@@ -291,7 +299,6 @@ export function DriverMonitoring() {
         </DialogHeader>
 
         {(() => {
-          // Derive the latest data from the live drivers list based on the id of the selected snapshot
           const currentDriver = drivers.find(d => d.driver_id === selectedDriver?.driver_id);
           if (!currentDriver) return null;
 

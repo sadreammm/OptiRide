@@ -40,8 +40,14 @@ export function SensorProvider({ children }) {
     useEffect(() => {
         const handleSafetyAlert = (alertData) => {
             console.log("[Sockets] Received safety_alert:", alertData);
-            if (alertData && alertData.alert_type === "CRITICAL_CRASH") {
-                router.push('/fall-detection');
+            if (alertData && (alertData.alert_type === "CRITICAL_CRASH" || alertData.type === "CRASH_DETECTED")) {
+                router.push({
+                    pathname: '/fall-detection',
+                    params: { 
+                        title: alertData.title || "EMERGENCY DETECTED!",
+                        message: alertData.message || "An emergency event has been detected."
+                    }
+                });
             }
         };
 
@@ -77,11 +83,17 @@ export function SensorProvider({ children }) {
     const batchIntervalRef = useRef(null);
     const telemetryIntervalRef = useRef(null);
     const deviceStatsIntervalRef = useRef(null);
-    const locationTrackingRef = useRef(false); // Track if location is running
+    const locationTrackingRef = useRef(false);
     const appStateRef = useRef(AppState.currentState);
     const cameraFrameRef = useRef(null);
+    const tokenRef = useRef(token);
+    const userRef = useRef(user);
+    const locationDataRef = useRef(locationData);
 
-    // Break state (persists across navigation)
+    useEffect(() => { tokenRef.current = token; }, [token]);
+    useEffect(() => { userRef.current = user; }, [user]);
+    useEffect(() => { locationDataRef.current = locationData; }, [locationData]);
+
     const [isOnBreak, setIsOnBreak] = useState(false);
     const [breakStartTime, setBreakStartTime] = useState(null);
     const [breakDuration, setBreakDuration] = useState(0);
@@ -134,10 +146,10 @@ export function SensorProvider({ children }) {
                 console.log("startShift succeeded, now updating status to available");
                 await updateDriverStatus(token, "available");
                 setIsOnline(true);
-                console.log("✅ Auto-started shift and went online successfully");
+                console.log("Auto-started shift and went online successfully");
             } catch (error) {
                 // Shift might already be started — just go available
-                console.log("⚠️ Auto-start shift failed, attempting to just go available... Error:", error.message || "Unknown error");
+                console.log("Auto-start shift failed, attempting to just go available... Error:", error.message || "Unknown error");
                 try {
                     await updateDriverStatus(token, "available");
                     setIsOnline(true);
@@ -267,16 +279,18 @@ export function SensorProvider({ children }) {
                     distanceInterval: 1,
                 },
                 (location) => {
-                    const speedMs = location.coords.speed;
-                    const speedKmh = speedMs && speedMs > 0 ? speedMs * 3.6 : 0;
+                    const speedMs = Math.max(0, location.coords.speed || 0);
+                    const speedKmh = speedMs * 3.6;
                     setCurrentSpeed(speedKmh);
-                    setLocationData({
+                    const newLoc = {
                         latitude: location.coords.latitude,
                         longitude: location.coords.longitude,
-                        speed: location.coords.speed,
-                        heading: location.coords.heading,
+                        speed: speedMs,
+                        heading: Math.max(0, location.coords.heading || 0),
                         timestamp: new Date().toISOString(),
-                    });
+                    };
+                    setLocationData(newLoc);
+                    locationDataRef.current = newLoc;
 
                     if (speedKmh > THRESHOLDS.SPEED_LIMIT) {
                         setLastAlert({ type: "OVER_SPEED", severity: "warning", speed: speedKmh, timestamp: new Date() });
@@ -305,22 +319,28 @@ export function SensorProvider({ children }) {
     useEffect(() => {
         if (isOnline && token) {
             telemetryIntervalRef.current = setInterval(() => {
-                if (locationData) {
-                    updateDriverLocation(token, {
-                        latitude: locationData.latitude,
-                        longitude: locationData.longitude,
-                        speed: locationData.speed || 0,
-                        heading: locationData.heading || 0
+                const currentLoc = locationDataRef.current;
+                const currentToken = tokenRef.current;
+
+                if (currentLoc && currentToken) {
+                    updateDriverLocation(currentToken, {
+                        latitude: currentLoc.latitude,
+                        longitude: currentLoc.longitude,
+                        speed: currentLoc.speed || 0,
+                        heading: currentLoc.heading || 0
                     }).catch(err => console.warn("Telemetry update failed:", err.message));
                 }
             }, TELEMETRY_INTERVAL);
 
             deviceStatsIntervalRef.current = setInterval(() => {
-                updateTelemetry(token, {
-                    battery_level: batteryLevel,
-                    network_strength: networkStrength,
-                    camera_active: isMonitoring
-                }).catch(err => console.warn("Device stats update failed:", err.message));
+                const currentToken = tokenRef.current;
+                if (currentToken) {
+                    updateTelemetry(currentToken, {
+                        battery_level: batteryLevel,
+                        network_strength: networkStrength,
+                        camera_active: isMonitoringRef.current
+                    }).catch(err => console.warn("Device stats update failed:", err.message));
+                }
             }, DEVICE_STATS_INTERVAL);
         }
 
@@ -328,22 +348,19 @@ export function SensorProvider({ children }) {
             if (telemetryIntervalRef.current) clearInterval(telemetryIntervalRef.current);
             if (deviceStatsIntervalRef.current) clearInterval(deviceStatsIntervalRef.current);
         };
-    }, [isOnline, token]);
+    }, [isOnline, token]); 
 
-    // Start sensor monitoring (high frequency)
     const startMonitoring = useCallback(async () => {
         if (Platform.OS === "web") {
             console.warn("Sensor monitoring not available on web");
             return false;
         }
 
-        // Check if already monitoring using ref (avoids stale closure)
         if (isMonitoringRef.current) {
             console.log("Already monitoring sensors");
             return true;
         }
 
-        // Mark as monitoring immediately to prevent double-starts
         isMonitoringRef.current = true;
 
         try {
@@ -406,24 +423,23 @@ export function SensorProvider({ children }) {
 
             // Start batch sending interval
             batchIntervalRef.current = setInterval(() => {
-                sendSensorBatch(newSessionId);
+                if (typeof sendSensorBatch === 'function') {
+                    sendSensorBatch(newSessionId);
+                }
             }, BATCH_SEND_INTERVAL);
 
-            // Update state - use callback form to ensure it triggers
             setIsMonitoring(() => {
                 console.log("setIsMonitoring callback - setting to true");
                 return true;
             });
-            console.log("Sensor monitoring started successfully");
             return true;
         } catch (error) {
             console.error("Error starting sensor monitoring:", error);
-            // Even if sensors fail, set monitoring true so UI doesn't keep showing the button
             isMonitoringRef.current = true;
             setIsMonitoring(true);
             return false;
         }
-    }, [analyzeAccelerometer, analyzeGyroscope]);
+    }, [analyzeAccelerometer, analyzeGyroscope, sendSensorBatch]);
 
     // Stop sensor monitoring
     const stopMonitoring = useCallback(() => {
@@ -549,30 +565,36 @@ export function SensorProvider({ children }) {
 
     // Send sensor batch to backend
     const sendSensorBatch = useCallback(async (currentSessionId) => {
-        if (!token || !user?.driver_id || accelerometerBuffer.current.length === 0) {
+        const currentToken = tokenRef.current;
+        const currentUser = userRef.current;
+
+        if (!currentToken || !currentUser?.driver_id) {
+            console.log("[SensorBatch] Missing token or driver_id, skipping...");
             return;
         }
 
         const batch = {
-            driver_id: user.driver_id,
+            driver_id: currentUser.driver_id,
             session_id: currentSessionId,
-            accelerometer_data: [...accelerometerBuffer.current],
-            gyroscope_data: [...gyroscopeBuffer.current],
-            location_data: locationData || {
+            accelerometer_data: accelerometerBuffer.current ? [...accelerometerBuffer.current] : [],
+            gyroscope_data: gyroscopeBuffer.current ? [...gyroscopeBuffer.current] : [],
+            location_data: locationDataRef.current || {
                 latitude: 0,
                 longitude: 0,
                 speed: 0,
+                heading: 0,
                 timestamp: new Date().toISOString(),
             },
         };
 
         if (cameraFrameRef.current) {
             batch.camera_frame_data = cameraFrameRef.current;
-            cameraFrameRef.current = null; // Clear so we don't send stale frames
+            cameraFrameRef.current = null;
         }
 
+        console.log(`[SensorBatch] Sending data for session ${currentSessionId}... (Acc: ${batch.accelerometer_data.length}, Gyro: ${batch.gyroscope_data.length})`);
         try {
-            const result = await submitSensorData(token, batch);
+            const result = await submitSensorData(currentToken, batch);
 
             const crashProbability = result?.crash_probability ?? 0;
             const fallProbability = result?.fall_probability ?? 0;
@@ -605,7 +627,13 @@ export function SensorProvider({ children }) {
                     riskAction: "ESCALATE",
                     timestamp: new Date(),
                 });
-                router.push('/fall-detection');
+                router.push({
+                    pathname: '/fall-detection',
+                    params: { 
+                        title: "CRASH DETECTED!",
+                        message: "A high-risk crash event has been detected."
+                    }
+                });
             } else if (crashAction === "WARN") {
                 setLastAlert({
                     type: "CRASH_RISK_WARN",
@@ -622,7 +650,13 @@ export function SensorProvider({ children }) {
                     riskAction: "ESCALATE",
                     timestamp: new Date(),
                 });
-                router.push('/fall-detection');
+                router.push({
+                    pathname: '/fall-detection',
+                    params: { 
+                        title: "FALL DETECTED!",
+                        message: "A high-risk fall event has been detected."
+                    }
+                });
             } else if (fallAction === "WARN") {
                 setLastAlert({
                     type: "FALL_RISK_WARN",

@@ -330,3 +330,4 @@ class PredictiveRisksResponse(BaseModel):
     high_risk_zones: List[HighRiskZone]
     drivers_at_risk: List[AtRiskDriver]
     weather_impacts: List[WeatherImpact]
+

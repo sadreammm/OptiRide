@@ -126,7 +126,7 @@ class RiskDetectionEngine:
         if np.unique(y).size < 2:
             return {"model": None, "threshold": 0.65}
 
-        X = df[self.features_impact]
+        X = df[self.features_impact].fillna(0)
         groups = df[group_col].values
 
         gss = GroupShuffleSplit(n_splits=1, test_size=0.3, random_state=42)
@@ -137,7 +137,6 @@ class RiskDetectionEngine:
 
         model = Pipeline(
             [
-                ("impute", SimpleImputer(strategy="median")),
                 ("scale", StandardScaler()),
                 (
                     "clf",
@@ -221,7 +220,7 @@ class RiskDetectionEngine:
             return df.copy()
 
         result = df.copy()
-        X = result.reindex(columns=self.features_impact, fill_value=0)
+        X = result.reindex(columns=self.features_impact, fill_value=0).fillna(0)
         result["p_crash"] = self._safe_predict_proba(self.crash_model, X)
         result["p_fall"] = self._safe_predict_proba(self.fall_model, X)
 
@@ -257,7 +256,7 @@ class RiskDetectionEngine:
             }
 
         row_df = pd.DataFrame([sensor_row])
-        X = row_df.reindex(columns=self.features_impact, fill_value=0)
+        X = row_df.reindex(columns=self.features_impact, fill_value=0).fillna(0)
         p_crash = float(self._safe_predict_proba(self.crash_model, X)[0])
         p_fall = float(self._safe_predict_proba(self.fall_model, X)[0])
         impact = sensor_row.get(
@@ -352,7 +351,7 @@ class RiskDetectionEngine:
         prob: float,
         impact_sev: float,
         speed: Optional[float] = None,
-        warn_threshold: float = 0.55,
+        warn_threshold: float = 0.50,
     ):
         p = float(np.clip(prob, 0.0, 1.0))
         s = float(impact_sev) if impact_sev is not None else 0.0

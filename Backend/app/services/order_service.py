@@ -528,6 +528,24 @@ class OrderService:
             total_revenue=round(total_revenue, 2)
         )
     
+    def get_active_order_locations(self) -> List[Dict[str, Any]]:
+        orders = self.db.query(Order).filter(
+            Order.status.in_([OrderStatus.pending.value, OrderStatus.assigned.value, OrderStatus.picked_up.value, OrderStatus.offered.value])
+        ).all()
+        
+        return [
+            {
+                "order_id": order.order_id,
+                "status": order.status,
+                "pickup_latitude": order.pickup_latitude,
+                "pickup_longitude": order.pickup_longitude,
+                "dropoff_latitude": order.dropoff_latitude,
+                "dropoff_longitude": order.dropoff_longitude,
+                "pickup_zone": order.pickup_zone
+            }
+            for order in orders
+        ]
+
     def calculate_order_info(self, order: Order):
         try:
             headers = {

@@ -100,7 +100,6 @@ class DriverResponse(BaseModel):
         if v is None:
             return None
         if isinstance(v, WKBElement) or hasattr(v, "desc"):
-             # to_shape handles WKBElement
              point = to_shape(v)
              return LocationSchema(latitude=point.y, longitude=point.x)
         return v
@@ -109,7 +108,6 @@ class DriverResponse(BaseModel):
         from_attributes = True
 
 class DriverWithTodayStats(DriverResponse):
-    """Driver response with today's safety stats for table view"""
     today_safety_score: float = 100.0
     today_safety_alerts: int = 0
     today_harsh_braking: int = 0
@@ -124,27 +122,28 @@ class DriverPerformanceStats(BaseModel):
     driver_id : str
     name : str
 
-    # Today's stats (primary - for real-time monitoring)
+    # Today's stats
     today_orders : int
-    today_earnings : float  # Today's earnings from deliveries
+    today_earnings : float  
     today_breaks : int
     today_distance : float 
     today_safety_alerts : int 
-    today_safety_score : float  # Today's safety score (0-100)
+    today_safety_score : float  
     today_harsh_braking : int
     today_speeding : int
     today_fatigue_alerts : int
-    current_fatigue_score : float  # Current/real-time fatigue level
+    current_fatigue_score : float  
+    current_speed : float = 0.0 
     
     # Lifetime/overall stats
     total_orders : int
     total_assigned : int = 0
-    total_breaks : int = 0  # Lifetime breaks taken
-    total_distance : float = 0.0  # Lifetime distance in km
+    total_breaks : int = 0 
+    total_distance : float = 0.0 
     average_rating : float
     completion_rate : float
     
-    # 30-day totals and averages (secondary - for trends)
+    # 30-day totals and averages 
     orders_30d : int = 0  # Total orders in last 30 days
     breaks_30d : int = 0  # Total breaks in last 30 days
     distance_30d : float = 0.0  # Total distance in last 30 days

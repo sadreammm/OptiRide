@@ -313,12 +313,23 @@ class AllocationService:
                 Order.created_at >= datetime.utcnow() - timedelta(minutes=15)
             ).count()
 
-            supply = len(available) or 1
-            demand_pressure = round(pending / supply, 2)
+            effective_supply = (len(available) * self.DRIVER_CAPACITY) or 1
+            demand_pressure = round((pending + recent_orders * 0.5) / effective_supply, 2)
+
+            lat, lon = 25.1972, 55.2744 
+            if zone.centroid:
+                try:
+                    pt = to_shape(zone.centroid)
+                    lon = pt.x
+                    lat = pt.y
+                except:
+                    pass
 
             result.append({
                 "zone_id": zone.zone_id,
                 "zone_name": zone.name,
+                "latitude": lat,
+                "longitude": lon,
                 "demand_score": zone.demand_score,
                 "total_drivers": len(drivers_in_zone),
                 "available_drivers": len(available),
@@ -327,7 +338,7 @@ class AllocationService:
                 "pending_orders": pending,
                 "recent_orders": recent_orders,
                 "demand_pressure": demand_pressure,
-                "supply": supply
+                "supply": effective_supply
             })
         
         return {

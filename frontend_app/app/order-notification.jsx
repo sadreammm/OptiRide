@@ -26,7 +26,7 @@ export default function OrderNotificationScreen() {
   const params = useLocalSearchParams();
   const { token } = useAuth();
   const { currentOffer, clearCurrentOffer, syncOffers } = useOrderNotification();
-  const { refetchOrders } = useOrders();
+  const { orders, refetchOrders } = useOrders();
 
   const [driverLocation, setDriverLocation] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -98,11 +98,20 @@ export default function OrderNotificationScreen() {
       // Refresh orders list so the new order appears
       await refetchOrders();
       clearCurrentOffer();
-      // Navigate to fatigue detection with orderId
-      router.replace({
-        pathname: '/fatigue-detection',
-        params: { orderId: order.order_id }
-      });
+      const otherOngoingOrders = orders.filter(o =>
+        o.id !== order.order_id &&
+        (o.status === "assigned" || o.status === "picked_up")
+      );
+
+      if (otherOngoingOrders.length > 0) {
+        console.log("Found ongoing orders, skipping fatigue scan");
+        router.replace("/(tabs)/map");
+      } else {
+        router.replace({
+          pathname: '/fatigue-detection',
+          params: { orderId: order.order_id }
+        });
+      }
     } catch (error) {
       console.error('Failed to accept order:', error);
       setIsAccepting(false);

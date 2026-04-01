@@ -116,4 +116,4 @@ class PerformanceReport(Base):
     recommendations = Column(JSON)
     
     generated_by = Column(String, default="system")
-    generated_at = Column(DateTime, default=datetime.utcnow)
+    generated_at = Column(DateTime, default=datetime.utcnow)

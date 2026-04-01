@@ -44,7 +44,7 @@ class Driver(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     orders = relationship("Order", back_populates="driver")
-    alerts = relationship("Alert", back_populates="driver")
+    alerts = relationship("Alert", back_populates="driver", cascade="all, delete-orphan")
     assignments = relationship("Assignment", back_populates="driver")
     sensor_records = relationship("SensorRecord", back_populates="driver")
     events = relationship("Event", back_populates="driver")

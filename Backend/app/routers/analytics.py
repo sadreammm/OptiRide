@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from datetime import date
 
 from app.db.database import get_db
@@ -223,3 +223,4 @@ def get_predictive_risks(
 ):
     analytics_service = AnalyticsService(db)
     return analytics_service.get_predictive_risks()
+

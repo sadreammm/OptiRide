@@ -51,6 +51,7 @@ class AlertCreate(BaseModel):
 class AlertResponse(BaseModel):
     alert_id: str
     driver_id: str
+    driver_name: Optional[str] = None
     alert_type: str
     severity: int
     latitude: Optional[float] = None

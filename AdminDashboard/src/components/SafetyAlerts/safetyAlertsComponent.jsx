@@ -142,7 +142,7 @@ export function SafetyAlerts() {
         id: a.alert_id,
         type: a.alert_type,
         title: a.alert_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-        driver: driver?.name || "Unknown Driver",
+        driver: driver?.name || a.driver_name || "Unknown Driver",
         driverId: a.driver_id,
         description: `${a.alert_type.replace(/_/g, ' ')} detected.`,
         location: driver?.current_zone || "Unknown Zone",

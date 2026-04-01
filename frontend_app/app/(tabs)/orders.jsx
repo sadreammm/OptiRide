@@ -244,11 +244,22 @@ export default function OrdersScreen() {
                         try {
                           await acceptOrder(token, order.id);
                           await refetchOrders();
-                          // Navigate to fatigue detection
-                          router.push({
-                            pathname: '/fatigue-detection',
-                            params: { orderId: order.id }
-                          });
+
+                          const otherOngoingOrders = orders.filter(o =>
+                            o.id !== order.id &&
+                            (o.status === "assigned" || o.status === "picked_up")
+                          );
+
+                          if (otherOngoingOrders.length > 0) {
+                            console.log("Found ongoing orders, skipping fatigue scan");
+                            router.push("/(tabs)/map");
+                          } else {
+                            // Navigate to fatigue detection
+                            router.push({
+                              pathname: '/fatigue-detection',
+                              params: { orderId: order.id }
+                            });
+                          }
                         } catch (e) {
                           console.error('Failed to accept order:', e);
                         }

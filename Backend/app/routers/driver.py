@@ -60,85 +60,28 @@ def list_drivers(
 ):
     driver_service = DriverService(db)
     total = db.query(Driver).count()
-    drivers = driver_service.list_drivers(skip=skip, limit=limit)
-    
-    # Calculate today's stats for each driver
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    drivers = driver_service.get_all_drivers(skip=skip, limit=limit)
     
     drivers_with_stats = []
     for driver in drivers:
-        # Get counts by type
-        today_harsh_braking = db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.alert_type == 'harsh_braking',
-            Alert.timestamp >= today_start
-        ).count()
+        stats = driver_service.get_performance_stats(driver.driver_id)
         
-        today_speeding = db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.alert_type.in_(['speeding', 'speed_violation']),
-            Alert.timestamp >= today_start
-        ).count()
+        driver_resp = DriverWithTodayStats.model_validate(driver)
+        driver_resp.today_safety_score = stats.today_safety_score
+        driver_resp.today_safety_alerts = stats.today_safety_alerts
+        driver_resp.today_harsh_braking = stats.today_harsh_braking
+        driver_resp.today_speeding = stats.today_speeding
+        driver_resp.today_fatigue_alerts = stats.today_fatigue_alerts
+        driver_resp.fatigue_score = stats.current_fatigue_score
+        driver_resp.current_speed = getattr(stats, 'current_speed', 0.0)
         
-        today_fatigue = db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.alert_type.in_(['fatigue', 'fatigue_warning']),
-            Alert.timestamp >= today_start
-        ).count()
-        
-        today_critical = db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.severity == 4,
-            Alert.timestamp >= today_start
-        ).count()
-        
-        today_total = db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.timestamp >= today_start
-        ).count()
-        
-        # Calculate today's safety score
-        other_alerts = max(0, today_total - today_critical - today_fatigue - today_speeding - today_harsh_braking)
-        safety_score = 100.0
-        safety_score -= min(today_critical * 15, 45)
-        safety_score -= min(today_fatigue * 5, 25)
-        safety_score -= min(today_speeding * 3, 15)
-        safety_score -= min(today_harsh_braking * 2, 10)
-        safety_score -= min(other_alerts * 1, 5)
-        
-        latest_sensor = db.query(SensorRecord).filter(
-            SensorRecord.driver_id == driver.driver_id,
-            SensorRecord.recorded_at >= today_start,
-            SensorRecord.fatigue_score > 0.0
-        ).order_by(SensorRecord.recorded_at.desc()).first()
-        
-        current_fatigue = latest_sensor.fatigue_score if latest_sensor else 0.0
-        
-        if current_fatigue >= 0.8:  # SEVERE fatigue
-            safety_score -= 15
-        elif current_fatigue >= 0.65:  # WARNING fatigue
-            safety_score -= 8
-        elif current_fatigue >= 0.5:  # Elevated fatigue
-            safety_score -= 3
-        
-        safety_score = max(0, safety_score)
-        
-        # Create driver with stats
-        driver_data = DriverResponse.model_validate(driver).model_dump()
-        driver_data.update({
-            'today_safety_score': round(safety_score, 1),
-            'today_safety_alerts': today_total,
-            'today_harsh_braking': today_harsh_braking,
-            'today_speeding': today_speeding,
-            'today_fatigue_alerts': today_fatigue,
-            'fatigue_score': current_fatigue,
-        })
-        drivers_with_stats.append(DriverWithTodayStats(**driver_data))
+        if driver.user:
+            driver_resp.email = driver.user.email
+            driver_resp.phone_number = driver.user.phone_number
+
+        drivers_with_stats.append(driver_resp)
     
-    return DriverListResponse(
-        total=total,
-        drivers=drivers_with_stats
-    )
+    return DriverListResponse(drivers=drivers_with_stats, total=total)
 
 @router.get("/active-locations")
 def get_active_driver_locations(

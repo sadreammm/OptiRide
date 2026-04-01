@@ -82,23 +82,18 @@ def update_all_live_demand(
 def generate_forecast(
     zone_id: Optional[str] = Query(None, description="Zone ID (omit for all zones)"),
     horizon_minutes: int = Query(60, ge=15, le=180, description="Forecast horizon in minutes"),
-    method: str = Query("ensemble", description="Method: ensemble, ml_only, ts_only"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    if method not in ("ensemble", "ml_only", "ts_only"):
-        raise HTTPException(status_code=400, detail="Invalid method. Use: ensemble, ml_only, ts_only")
-
     service = ForecastingService(db)
     forecasts = service.generate_forecast(
         zone_id=zone_id,
-        horizon_minutes=horizon_minutes,
-        method=method
+        horizon_minutes=horizon_minutes
     )
 
     return {
         "zone_id": zone_id or "all",
-        "method": method,
+        "method": "ml_ensemble",
         "horizon_minutes": horizon_minutes,
         "forecast_count": len(forecasts),
         "forecasts": [

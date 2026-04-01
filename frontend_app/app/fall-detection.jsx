@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Platform, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { theme } from '@/constants/theme';
@@ -19,6 +19,7 @@ if (Platform.OS !== 'web') {
 
 export default function FallDetectionScreen() {
   const router = useRouter();
+  const { title: paramTitle, message: paramMessage } = useLocalSearchParams();
   const { token, user } = useAuth();
   const [countdown, setCountdown] = useState(60);
   const [driverLocation, setDriverLocation] = useState(null);
@@ -136,6 +137,8 @@ export default function FallDetectionScreen() {
 
       <View style={styles.cardContainer}>
         <FallAlertCard
+          title={paramTitle || "EMERGENCY DETECTED!"}
+          message={paramMessage || "An emergency event has been detected. Emergency services will be contacted automatically if you don't respond."}
           countdown={countdown}
           onImOkay={handleImOkay}
           onCallEmergency={handleCallEmergency}
@@ -146,15 +149,15 @@ export default function FallDetectionScreen() {
 }
 
 // Extracted component for reuse in web and native
-function FallAlertCard({ countdown, onImOkay, onCallEmergency }) {
+function FallAlertCard({ title, message, countdown, onImOkay, onCallEmergency }) {
   return (
     <Card style={styles.alertCard}>
       <View style={styles.iconContainer}>
         <Text style={styles.iconText}>⚠️</Text>
       </View>
-      <Text style={styles.title}>FALL DETECTED!</Text>
+      <Text style={styles.title}>{title}</Text>
       <Text style={styles.message}>
-        A fall has been detected. Emergency services will be contacted automatically if you don&apos;t respond.
+        {message}
       </Text>
 
       <View style={styles.countdownContainer}>

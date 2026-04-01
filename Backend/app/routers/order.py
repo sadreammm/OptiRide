@@ -137,6 +137,15 @@ def get_pending_orders(
         "orders": [OrderResponse.model_validate(order) for order in orders]
     }
 
+@router.get("/active-locations")
+def get_active_order_locations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    order_service = OrderService(db)
+    locations = order_service.get_active_order_locations()
+    return locations
+
 @router.get("/stats", response_model=OrderStats)
 def get_order_stats(
     db: Session = Depends(get_db),
