@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, Eye, MessageSquare, MapPin, Navigation, Package, TrendingUp, Clock, Battery, Wifi, Camera, Activity, } from "lucide-react";
+import { Search, Eye, MessageSquare, MapPin, Navigation, Package, TrendingUp, Clock, Battery, Wifi, Camera, Activity, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,7 +67,7 @@ export function DriverMonitoring() {
   const limit = 15;
   const [selectedManualZone, setSelectedManualZone] = useState("");
 
-  const { data: driversData, refetch } = useDrivers(0, 500);
+  const { data: driversData, loading, refetch } = useDrivers(0, 500);
 
   usePolling(refetch, 10000);
 
@@ -196,68 +196,85 @@ export function DriverMonitoring() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredDrivers.slice(page * limit, (page + 1) * limit).map((driver) => (<TableRow key={driver.driver_id}>
-              <TableCell>
-                <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${driver.fatigue_score >= 0.8 ? 'bg-destructive/20 text-destructive' :
-                    driver.fatigue_score >= 0.65 ? 'bg-warning/20 text-warning' :
-                      'bg-primary/20 text-primary'}`}>
-                    {driver.name.split(' ').map(n => n[0]).join('')}
+            {loading && !driversData ? (
+              <TableRow>
+                <TableCell colSpan={8} className="h-64 text-center">
+                  <div className="flex flex-col items-center justify-center gap-3">
+                    <Loader2 className="w-10 h-10 text-primary animate-spin" />
+                    <p className="text-muted-foreground font-medium">Fetching driver data...</p>
                   </div>
-                  <div>
-                    <p className="font-medium">{driver.name}</p>
-                    <p className="text-xs text-muted-foreground">{driver.driver_id}</p>
+                </TableCell>
+              </TableRow>
+            ) : filteredDrivers.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
+                  No drivers found matching your search.
+                </TableCell>
+              </TableRow>
+            ) : (
+              filteredDrivers.slice(page * limit, (page + 1) * limit).map((driver) => (<TableRow key={driver.driver_id}>
+                <TableCell>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${driver.fatigue_score >= 0.8 ? 'bg-destructive/20 text-destructive' :
+                      driver.fatigue_score >= 0.65 ? 'bg-warning/20 text-warning' :
+                        'bg-primary/20 text-primary'}`}>
+                      {driver.name.split(' ').map(n => n[0]).join('')}
+                    </div>
+                    <div>
+                      <p className="font-medium">{driver.name}</p>
+                      <p className="text-xs text-muted-foreground">{driver.driver_id}</p>
+                    </div>
                   </div>
-                </div>
-              </TableCell>
-              <TableCell>
-                <Badge className={`${getStatusColor(driver.status)} border-0`}>
-                  {driver.status}
-                </Badge>
-              </TableCell>
-              <TableCell>
-                <div className="flex items-center gap-1 text-muted-foreground">
-                  <MapPin className="w-3 h-3" />
-                  {driver.current_zone || "N/A"}
-                </div>
-              </TableCell>
-              <TableCell>
-                <Badge className={`${getFatigueColor(driver.fatigue_score ? driver.fatigue_score * 100 : 0)} border-0`}>
-                  {driver.fatigue_score >= 0.8 ? 'SEVERE' : driver.fatigue_score >= 0.65 ? 'WARNING' : 'NORMAL'}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-muted-foreground">
-                {driver.current_speed !== undefined && driver.current_speed !== null ? `${Math.max(0, Math.ceil(driver.current_speed))} km/h` : '0 km/h'}
-              </TableCell>
-              <TableCell className="text-muted-foreground">
-                {formatLastActive(driver.updated_at)}
-              </TableCell>
-              <TableCell>
-                <span className={`font-medium ${(driver.today_safety_score ?? 100) >= 80 ? 'text-success' :
-                  (driver.today_safety_score ?? 100) >= 50 ? 'text-warning' : 'text-destructive'
-                  }`}>
-                  {(driver.today_safety_score ?? 100).toFixed(0)}/100
-                </span>
-              </TableCell>
-              <TableCell>
-                <div className="flex items-center gap-2">
-                  <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setSelectedDriver(driver)}>
-                    <Eye className="w-4 h-4" />
-                  </Button>
-                  <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => {
-                    setChatTarget({
-                      driverId: driver.driver_id,
-                      driverName: driver.name,
-                      status: driver.status,
-                      location: driver.current_zone,
-                    });
-                    setIsChatOpen(true);
-                  }}>
-                    <MessageSquare className="w-4 h-4" />
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>))}
+                </TableCell>
+                <TableCell>
+                  <Badge className={`${getStatusColor(driver.status)} border-0`}>
+                    {driver.status}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1 text-muted-foreground">
+                    <MapPin className="w-3 h-3" />
+                    {driver.current_zone || "N/A"}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge className={`${getFatigueColor(driver.fatigue_score ? driver.fatigue_score * 100 : 0)} border-0`}>
+                    {driver.fatigue_score >= 0.8 ? 'SEVERE' : driver.fatigue_score >= 0.65 ? 'WARNING' : 'NORMAL'}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {driver.current_speed !== undefined && driver.current_speed !== null ? `${Math.max(0, Math.ceil(driver.current_speed))} km/h` : '0 km/h'}
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {formatLastActive(driver.updated_at)}
+                </TableCell>
+                <TableCell>
+                  <span className={`font-medium ${(driver.today_safety_score ?? 100) >= 80 ? 'text-success' :
+                    (driver.today_safety_score ?? 100) >= 50 ? 'text-warning' : 'text-destructive'
+                    }`}>
+                    {(driver.today_safety_score ?? 100).toFixed(0)}/100
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setSelectedDriver(driver)}>
+                      <Eye className="w-4 h-4" />
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => {
+                      setChatTarget({
+                        driverId: driver.driver_id,
+                        driverName: driver.name,
+                        status: driver.status,
+                        location: driver.current_zone,
+                      });
+                      setIsChatOpen(true);
+                    }}>
+                      <MessageSquare className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>))
+            )}
           </TableBody>
         </Table>
       </CardContent>

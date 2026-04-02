@@ -64,16 +64,15 @@ def list_drivers(
     
     drivers_with_stats = []
     for driver in drivers:
-        stats = driver_service.get_performance_stats(driver.driver_id)
-        
         driver_resp = DriverWithTodayStats.model_validate(driver)
-        driver_resp.today_safety_score = stats.today_safety_score
-        driver_resp.today_safety_alerts = stats.today_safety_alerts
-        driver_resp.today_harsh_braking = stats.today_harsh_braking
-        driver_resp.today_speeding = stats.today_speeding
-        driver_resp.today_fatigue_alerts = stats.today_fatigue_alerts
-        driver_resp.fatigue_score = stats.current_fatigue_score
-        driver_resp.current_speed = getattr(stats, 'current_speed', 0.0)
+        
+        driver_resp.today_safety_alerts = driver.safety_alerts
+        driver_resp.today_safety_score = driver_resp.safety_score
+        driver_resp.fatigue_score = driver.fatigue_score
+        driver_resp.current_speed = driver.current_speed
+        driver_resp.today_harsh_braking = 0
+        driver_resp.today_speeding = 0
+        driver_resp.today_fatigue_alerts = 0
         
         if driver.user:
             driver_resp.email = driver.user.email

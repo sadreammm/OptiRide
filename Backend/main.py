@@ -26,10 +26,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=[
-        "http://localhost:8080",
-        "https://admin.optiride.app"
-    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

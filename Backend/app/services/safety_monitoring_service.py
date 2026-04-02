@@ -723,6 +723,10 @@ class SafetyMonitoringService:
                 alerts.append(alert) 
         
         if alerts:
+            driver = self.db.query(Driver).filter(Driver.driver_id == driver_id).first()
+            if driver:
+                driver.safety_alerts = (driver.safety_alerts or 0) + len(alerts)
+            
             self.db.commit()
 
             for alert in alerts:

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.core.dependencies import get_current_admin, get_current_user, get_current_admin_head
+from app.core.config import settings
 from app.services.auth_service import AuthService
 from app.schemas.auth import LoginRequest, AdminCreateUserRequest, LoginResponse, UserResponse, FirebaseLoginRequest, UserRole
 
@@ -33,14 +34,27 @@ def admin_delete_user(
 @router.post("/login", response_model=LoginResponse)
 def login(
     token_data: dict, 
+    response: Response,
     db: Session = Depends(get_db)
 ):
     auth_service = AuthService()
     login_response = auth_service.login(token_data=token_data, db=db)
+    
+    response.set_cookie(
+        key="optiride_token",
+        value=login_response.token.token,
+        httponly=True,
+        max_age=3600,
+        expires=3600,
+        samesite="none",
+        secure=True,
+    )
+    
     return login_response
 
 @router.post("/logout")
-def logout():
+def logout(response: Response):
+    response.delete_cookie("optiride_token")
     return {"message": "Logout successful"}
 
 @router.get("/me", response_model=UserResponse)

@@ -56,7 +56,6 @@ services:
     ports:
       - "8000:8000"
     environment:
-    environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-optiride}
       REDIS_HOST: redis
       REDIS_PORT: 6379

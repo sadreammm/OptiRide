@@ -1,6 +1,6 @@
 import firebase_admin
 from firebase_admin import auth, credentials
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from typing import Optional
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.db.database import get_db
 from app.models.user import User
 
-# Only initialize Firebase if credentials file exists
+
 if os.path.exists(settings.FIREBASE_CREDENTIALS_PATH) and not firebase_admin._apps:
     try:
         cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
@@ -19,19 +19,36 @@ if os.path.exists(settings.FIREBASE_CREDENTIALS_PATH) and not firebase_admin._ap
         print(f"Warning: Firebase initialization failed: {e}")
         print("Firebase authentication will be disabled for development")
 
-security_scheme = HTTPBearer()
+security_scheme = HTTPBearer(auto_error=False)
 
-def verify_firebase_token(creds : HTTPAuthorizationCredentials = Depends(security_scheme)):
-    token = creds.credentials
+async def verify_firebase_token(
+    request: Request,
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)
+):
+    token = None
+    
+    if creds:
+        token = creds.credentials
+    
+    if not token:
+        token = request.cookies.get("optiride_token")
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
     try:
         decoded_token = auth.verify_id_token(token)
         return decoded_token
-    except auth.InvalidIdTokenError as e:
+    except auth.InvalidIdTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Firebase token",
         )
-    except auth.ExpiredIdTokenError as e:
+    except auth.ExpiredIdTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Expired Firebase token",
@@ -39,7 +56,7 @@ def verify_firebase_token(creds : HTTPAuthorizationCredentials = Depends(securit
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail=f"Could not validate credentials: {str(e)}",
         )
 
 
