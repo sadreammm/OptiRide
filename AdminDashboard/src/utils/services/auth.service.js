@@ -26,8 +26,7 @@ export const authService = {
         try {
             const response = await apiClient.post('/auth/login', tokenData);
             // Store token and user data
-            if (response.data.token && response.data.token.token) {
-                localStorage.setItem('optiride_token', response.data.token.token);
+            if (response.data.user) {
                 localStorage.setItem('optiride_user', JSON.stringify(response.data.user));
                 localStorage.setItem('optiride_login_time', Date.now().toString());
             }
@@ -41,13 +40,11 @@ export const authService = {
     async logout() {
         try {
             await apiClient.post('/auth/logout');
-            localStorage.removeItem('optiride_token');
             localStorage.removeItem('optiride_user');
             localStorage.removeItem('optiride_login_time');
         }
         catch (error) {
             // Always clear local storage on logout attempt
-            localStorage.removeItem('optiride_token');
             localStorage.removeItem('optiride_user');
             localStorage.removeItem('optiride_login_time');
             throw handleApiError(error);
@@ -70,7 +67,7 @@ export const authService = {
     },
     // Check if user is authenticated
     isAuthenticated() {
-        return !!localStorage.getItem('optiride_token');
+        return !!localStorage.getItem('optiride_user');
     },
     // Check if user is admin
     isAdmin() {

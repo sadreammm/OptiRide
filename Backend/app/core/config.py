@@ -8,15 +8,13 @@ class Settings(BaseSettings):
     APP_NAME: str = "OptiRide Backend"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
-    ENVIRONMENT: str = "development"
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "production")
 
     # Database Settings
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/optiride")
 
     # Firebase Settings
     FIREBASE_CREDENTIALS_PATH: str = os.getenv("FIREBASE_CREDENTIALS_PATH", "serviceAccount.json")
-
-    # Big Data Storage (AWS S3) Settings
 
     # Streaming Service (Kafka) Settings
     KAFKA_BOOTSTRAP_SERVERS: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
@@ -38,10 +36,11 @@ def get_settings():
     return Settings()
 
 settings = get_settings()
-# CORS origins - hardcoded for now since env parsing is having issues
+
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000", 
     "http://localhost:8000",
-    "*"
+    "https://admin.optiride.app",
+    "http://localhost:8080"
 ]

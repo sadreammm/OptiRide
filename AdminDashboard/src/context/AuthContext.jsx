@@ -17,7 +17,6 @@ export const AuthProvider = ({ children }) => {
     };
 
     const clearSession = () => {
-        localStorage.removeItem('optiride_token');
         localStorage.removeItem('optiride_user');
         localStorage.removeItem('optiride_login_time');
         setUser(null);
@@ -28,23 +27,19 @@ export const AuthProvider = ({ children }) => {
         if (storedUser && !isSessionExpired()) {
             setUser(JSON.parse(storedUser));
         } else if (storedUser) {
-            // Session expired — clean up
             clearSession();
         }
         setLoading(false);
 
-        // Auto-refresh: whenever Firebase refreshes the token, update localStorage
         const unsubscribe = onIdTokenChanged(auth, async (firebaseUser) => {
             if (firebaseUser && !isSessionExpired()) {
-                const newToken = await firebaseUser.getIdToken();
-                localStorage.setItem('optiride_token', newToken);
+
             } else if (isSessionExpired()) {
                 clearSession();
                 await signOut(auth);
             }
         });
 
-        // Force-refresh token every 45 minutes (Firebase tokens expire at 60 min)
         const refreshInterval = setInterval(async () => {
             if (isSessionExpired()) {
                 clearSession();
@@ -53,8 +48,7 @@ export const AuthProvider = ({ children }) => {
             }
             const currentUser = auth.currentUser;
             if (currentUser) {
-                const newToken = await currentUser.getIdToken(true);
-                localStorage.setItem('optiride_token', newToken);
+                await currentUser.getIdToken(true);
             }
         }, 45 * 60 * 1000);
 
@@ -76,7 +70,6 @@ export const AuthProvider = ({ children }) => {
 
             const { token: tokenData, user: userData } = response.data;
 
-            localStorage.setItem('optiride_token', tokenData.token);
             localStorage.setItem('optiride_user', JSON.stringify(userData));
             localStorage.setItem('optiride_login_time', Date.now().toString());
             setUser(userData);
