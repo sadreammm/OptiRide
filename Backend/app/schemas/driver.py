@@ -88,11 +88,21 @@ class DriverResponse(BaseModel):
 
     @computed_field
     def safety_score(self) -> float:
+        if hasattr(self, 'duty_status') and self.duty_status == "off_duty":
+            return 100.0
+            
         base_score = 100
-        alert_penalty = (self.safety_alerts or 0) * 5
-        fatigue_penalty = (self.fatigue_score or 0) * 2
-        final_score =  base_score - alert_penalty - fatigue_penalty
-        return max(0, min(final_score, 100))
+        alert_penalty = (self.safety_alerts or 0) * 3.0
+        
+        normalized_fatigue = min(1.0, max(0.0, self.fatigue_score or 0.0))
+        fatigue_penalty = normalized_fatigue * 30.0
+        
+        if normalized_fatigue >= 0.9: fatigue_penalty += 40
+        elif normalized_fatigue >= 0.8: fatigue_penalty += 20
+        elif normalized_fatigue >= 0.7: fatigue_penalty += 10
+
+        final_score = base_score - alert_penalty - fatigue_penalty
+        return max(0.0, min(final_score, 100.0))
 
     @field_validator('location', mode='before')
     @classmethod
@@ -113,6 +123,7 @@ class DriverWithTodayStats(DriverResponse):
     today_harsh_braking: int = 0
     today_speeding: int = 0
     today_fatigue_alerts: int = 0
+    fatigue_level: str = "NORMAL"
 
 class DriverListResponse(BaseModel):
     drivers: list[DriverWithTodayStats]
@@ -121,6 +132,7 @@ class DriverListResponse(BaseModel):
 class DriverPerformanceStats(BaseModel):
     driver_id : str
     name : str
+    fatigue_level: str = "NORMAL"
 
     # Today's stats
     today_orders : int

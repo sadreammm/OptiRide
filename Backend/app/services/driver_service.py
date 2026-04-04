@@ -22,12 +22,58 @@ from app.services.allocation_service import AllocationService
 from app.services.distance_tracking_service import DistanceTrackingService
 import logging
 import redis as redis_lib
+import math
 
 logger = logging.getLogger(__name__)
 
 class DriverService:
     def __init__(self, db: Session):
         self.db = db
+
+    @staticmethod
+    def get_fatigue_level(score: float, today_alerts: int = 0) -> str:
+        if score >= 0.8 or today_alerts >= 10:
+            return "SEVERE"
+        if score >= 0.65 or today_alerts >= 5:
+            return "WARNING"
+        return "NORMAL"
+
+    @staticmethod
+    def calculate_safety_score(
+        heavy_deductions: int = 0,
+        fatigue_alerts: int = 0,
+        speeding_events: int = 0,
+        harsh_braking_events: int = 0,
+        unusual_movement_events: int = 0,
+        harsh_acceleration_events: int = 0,
+        fatigue_score: float = 0.0
+    ) -> float:
+        score = 100.0
+        
+        # Deductions
+        score -= (heavy_deductions * 15)
+        score -= (unusual_movement_events * 5)
+        score -= (fatigue_alerts * 5)
+        score -= (speeding_events * 3)
+        score -= (harsh_braking_events * 2)
+        score -= (harsh_acceleration_events * 2)
+        
+        # Fatigue penalties
+        normalized_fatigue = min(1.0, max(0.0, fatigue_score))
+        
+        # Base linear penalty: -30 points at 100% fatigue
+        score -= (normalized_fatigue * 30)
+
+        # Extra Tier penalties for high risk (Additive)
+        if normalized_fatigue >= 0.9:  # CRITICAL
+            score -= 40
+        elif normalized_fatigue >= 0.8:  # SEVERE
+            score -= 20
+        elif normalized_fatigue >= 0.7:  # WARNING
+            score -= 10
+
+        return max(5.0, score)
+    
     
     def create_driver(self, driver_data: DriverCreate) -> Driver:
         driver = Driver(
@@ -418,9 +464,7 @@ class DriverService:
                 detail="Driver not found"
             )
         
-        
         today_midnight = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        
         is_inactive_today = driver.updated_at < today_midnight if driver.updated_at else True
         
         if driver.duty_status == DutyStatus.OFF_DUTY.value or is_inactive_today:
@@ -451,7 +495,8 @@ class DriverService:
                 total_30d_alerts=self.db.query(Alert).filter(Alert.driver_id == driver.driver_id, Alert.timestamp >= (datetime.utcnow() - timedelta(days=30))).count(),
                 avg_30d_harsh_braking=0.0,
                 avg_30d_speeding=0.0,
-                avg_30d_fatigue_alerts=0.0
+                avg_30d_fatigue_alerts=0.0,
+                fatigue_level="NORMAL"
             )
 
         shift_start = today_midnight
@@ -460,6 +505,7 @@ class DriverService:
 
         last_30_days = datetime.utcnow() - timedelta(days=30)
 
+        # Basic counts
         today_orders = self.db.query(Order).filter(
             Order.driver_id == driver.driver_id,
             Order.created_at >= shift_start
@@ -468,14 +514,11 @@ class DriverService:
         distance_service = DistanceTrackingService(self.db)
         today_distance = distance_service.get_today_distance(driver.driver_id, start_time=shift_start)
         
-        # Today's earnings calculation:
-        # - 5 AED base fee per delivery
-        # - 0.2 AED per kilometer driven
         BASE_FEE_PER_ORDER = 5.0
         RATE_PER_KM = 0.2
         today_earnings = (today_orders * BASE_FEE_PER_ORDER) + (today_distance * RATE_PER_KM)
 
-
+        # Alert counts for safety score
         today_harsh_braking = self.db.query(Alert).filter(
             Alert.driver_id == driver.driver_id,
             Alert.alert_type == 'harsh_braking',
@@ -494,12 +537,24 @@ class DriverService:
             Alert.timestamp >= shift_start
         ).count()
         
-        today_critical_alerts = self.db.query(Alert).filter(
+        today_unusual_movement = self.db.query(Alert).filter(
             Alert.driver_id == driver.driver_id,
-            Alert.severity == 4,
-            Alert.timestamp >= shift_start
+            Alert.timestamp >= shift_start,
+            Alert.alert_type == 'unusual_movement'
         ).count()
-        
+
+        today_harsh_acceleration = self.db.query(Alert).filter(
+            Alert.driver_id == driver.driver_id,
+            Alert.timestamp >= shift_start,
+            Alert.alert_type == 'harsh_acceleration'
+        ).count()
+
+        today_heavy_deductions = self.db.query(Alert).filter(
+            Alert.driver_id == driver.driver_id,
+            Alert.timestamp >= shift_start,
+            Alert.severity == AlertSeverity.CRITICAL.value
+        ).count()
+
         today_safety_alerts = self.db.query(Alert).filter(
             Alert.driver_id == driver.driver_id,
             Alert.timestamp >= shift_start,
@@ -518,58 +573,22 @@ class DriverService:
             Break.start_time >= shift_start
         ).count()
 
-        today_heavy_deductions = self.db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.timestamp >= shift_start,
-            Alert.severity == AlertSeverity.CRITICAL.value
-        ).count()
-
-        today_fatigue_alerts = self.db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.timestamp >= shift_start,
-            Alert.alert_type.in_(['fatigue', 'fatigue_warning'])
-        ).count()
-
-        today_speeding = self.db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.timestamp >= shift_start,
-            Alert.alert_type.in_(['speeding', 'speed_violation'])
-        ).count()
-
-        today_harsh_braking = self.db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.timestamp >= shift_start,
-            Alert.alert_type == 'harsh_braking'
-        ).count()
-
-        today_safety_score = 100.0
-        
-        # Deductions
-        today_safety_score -= (today_heavy_deductions * 15)
-        today_safety_score -= (today_fatigue_alerts * 5)
-        today_safety_score -= (today_speeding * 3)
-        today_safety_score -= (today_harsh_braking * 2)
-        
         raw_fatigue = driver.fatigue_score or 0.0
-        normalized_fatigue = raw_fatigue
         if raw_fatigue > 1.0:
-            normalized_fatigue = raw_fatigue / 10.0 if raw_fatigue <= 10.0 else raw_fatigue / 100.0
-        
-        normalized_fatigue = min(1.0, max(0.0, normalized_fatigue))
+            raw_fatigue = raw_fatigue / 100.0
+        normalized_fatigue = min(1.0, max(0.0, raw_fatigue))
 
-        # Base linear penalty: -30 points at 100% fatigue
-        today_safety_score -= (normalized_fatigue * 30)
-
-        # Extra Tier penalties for high risk (Additive)
-        if normalized_fatigue >= 0.9:  # CRITICAL
-            today_safety_score -= 40
-        elif normalized_fatigue >= 0.8:  # SEVERE
-            today_safety_score -= 20
-        elif normalized_fatigue >= 0.7:  # WARNING
-            today_safety_score -= 10
-            
-        today_safety_score = max(0, today_safety_score)
+        today_safety_score = self.calculate_safety_score(
+            heavy_deductions=today_heavy_deductions,
+            fatigue_alerts=today_fatigue_alerts,
+            speeding_events=today_speeding,
+            harsh_braking_events=today_harsh_braking,
+            unusual_movement_events=today_unusual_movement,
+            harsh_acceleration_events=today_harsh_acceleration,
+            fatigue_score=normalized_fatigue
+        )
         
+        # Determine Current Speed
         if driver.duty_status == DutyStatus.ON_DUTY.value:
             try:
                 cached_speed = redis_client.get(f"driver:{driver.driver_id}:speed")
@@ -578,83 +597,38 @@ class DriverService:
                 current_speed = driver.current_speed or 0.0
         else:
             current_speed = 0.0
+
+        current_speed = math.ceil(float(current_speed))
         current_fatigue = normalized_fatigue if driver.duty_status == DutyStatus.ON_DUTY.value else 0.0
+        
+        fatigue_level = self.get_fatigue_level(
+            score=current_fatigue,
+            today_alerts=today_fatigue_alerts
+        )
 
         if driver.duty_status == DutyStatus.ON_DUTY.value:
             driver.safety_alerts = today_safety_alerts
 
-        # ========== LIFETIME STATS ==========
-        total_orders = self.db.query(Order).filter(
-            Order.driver_id == driver.driver_id,
-            Order.status == 'delivered'
-        ).count()
-
-        total_assigned = self.db.query(Order).filter(
-            Order.driver_id == driver.driver_id,
-        ).count()
-
+        # Lifetime stats
+        total_orders = self.db.query(Order).filter(Order.driver_id == driver.driver_id, Order.status == 'delivered').count()
+        total_assigned = self.db.query(Order).filter(Order.driver_id == driver.driver_id).count()
         completion_rate = (total_orders / total_assigned * 100) if total_assigned > 0 else 0.0
-        
-        # Lifetime breaks and distance
-        total_breaks = self.db.query(Break).filter(
-            Break.driver_id == driver.driver_id
-        ).count()
-        
-        total_distance = self.db.query(func.sum(Order.distance_km)).filter(
-            Order.driver_id == driver.driver_id,
-            Order.status == 'delivered'
-        ).scalar() or 0.0
+        total_breaks = self.db.query(Break).filter(Break.driver_id == driver.driver_id).count()
+        total_distance = self.db.query(func.sum(Order.distance_km)).filter(Order.driver_id == driver.driver_id, Order.status == 'delivered').scalar() or 0.0
 
-        # ========== 30-DAY STATS (Secondary - Trends) ==========
-        orders_30d = self.db.query(Order).filter(
-            Order.driver_id == driver.driver_id,
-            Order.status == 'delivered',
-            Order.delivered_at >= last_30_days
-        ).count()
+        # 30-day stats
+        orders_30d = self.db.query(Order).filter(Order.driver_id == driver.driver_id, Order.status == 'delivered', Order.delivered_at >= last_30_days).count()
+        breaks_30d = self.db.query(Break).filter(Break.driver_id == driver.driver_id, Break.start_time >= last_30_days).count()
+        distance_30d = self.db.query(func.sum(Order.distance_km)).filter(Order.driver_id == driver.driver_id, Order.status == 'delivered', Order.delivered_at >= last_30_days).scalar() or 0.0
         
-        breaks_30d = self.db.query(Break).filter(
-            Break.driver_id == driver.driver_id,
-            Break.start_time >= last_30_days
-        ).count()
-        
-        distance_30d = self.db.query(func.sum(Order.distance_km)).filter(
-            Order.driver_id == driver.driver_id,
-            Order.status == 'delivered',
-            Order.delivered_at >= last_30_days
-        ).scalar() or 0.0
-        
-        total_30d_alerts = self.db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.timestamp >= last_30_days
-        ).count()
-        
-        harsh_braking_30d = self.db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.alert_type == 'harsh_braking',
-            Alert.timestamp >= last_30_days
-        ).count()
-        
-        speeding_30d = self.db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.alert_type.in_(['speeding', 'speed_violation']),
-            Alert.timestamp >= last_30_days
-        ).count()
-        
-        fatigue_30d = self.db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.alert_type.in_(['fatigue', 'fatigue_warning']),
-            Alert.timestamp >= last_30_days
-        ).count()
-        
-        critical_30d = self.db.query(Alert).filter(
-            Alert.driver_id == driver.driver_id,
-            Alert.severity == 4,
-            Alert.timestamp >= last_30_days
-        ).count()
+        total_30d_alerts = self.db.query(Alert).filter(Alert.driver_id == driver.driver_id, Alert.timestamp >= last_30_days).count()
+        harsh_braking_30d = self.db.query(Alert).filter(Alert.driver_id == driver.driver_id, Alert.alert_type == 'harsh_braking', Alert.timestamp >= last_30_days).count()
+        speeding_30d = self.db.query(Alert).filter(Alert.driver_id == driver.driver_id, Alert.alert_type.in_(['speeding', 'speed_violation']), Alert.timestamp >= last_30_days).count()
+        fatigue_30d = self.db.query(Alert).filter(Alert.driver_id == driver.driver_id, Alert.alert_type.in_(['fatigue', 'fatigue_warning']), Alert.timestamp >= last_30_days).count()
+        critical_30d = self.db.query(Alert).filter(Alert.driver_id == driver.driver_id, Alert.severity == 4, Alert.timestamp >= last_30_days).count()
         
         other_30d = total_30d_alerts - critical_30d - fatigue_30d - speeding_30d - harsh_braking_30d
         
-        # Calculate 30-day average safety score
         avg_30d_safety_score = 100.0
         avg_30d_safety_score -= min(critical_30d * 15, 45)
         avg_30d_safety_score -= min(fatigue_30d * 5, 25)
@@ -663,10 +637,19 @@ class DriverService:
         avg_30d_safety_score -= min(other_30d * 1, 5)
         avg_30d_safety_score = max(0, avg_30d_safety_score)
 
+        base_fatigue_decimal = current_fatigue 
+        if base_fatigue_decimal > 1.0:
+            base_fatigue_decimal = base_fatigue_decimal / 100.0
+        
+        instant_component = base_fatigue_decimal * 100 
+        history_component = today_fatigue_alerts * 2 
+        
+        final_fatigue_display = float(min(100.0, instant_component + history_component))
+
         return DriverPerformanceStats(
             driver_id=driver.driver_id,
             name=driver.name,
-            # Today's stats (primary)
+            fatigue_level=fatigue_level,
             today_orders=today_orders,
             today_earnings=round(today_earnings, 2),
             today_breaks=today_breaks,
@@ -676,16 +659,14 @@ class DriverService:
             today_harsh_braking=today_harsh_braking,
             today_speeding=today_speeding,
             today_fatigue_alerts=today_fatigue_alerts,
-            current_fatigue_score=current_fatigue,
+            current_fatigue_score=round(final_fatigue_display, 1),
             current_speed=current_speed, 
-            # Lifetime stats
             total_orders=total_orders,
             total_assigned=total_assigned,
             total_breaks=total_breaks,
             total_distance=round(total_distance, 2),
             average_rating=driver.rating or 0.0,
             completion_rate=round(completion_rate, 2),
-            # 30-day totals and averages
             orders_30d=orders_30d,
             breaks_30d=breaks_30d,
             distance_30d=round(distance_30d, 2),
@@ -695,7 +676,7 @@ class DriverService:
             avg_30d_speeding=round(speeding_30d / 30, 2),
             avg_30d_fatigue_alerts=round(fatigue_30d / 30, 2)
         )
-    
+
     def update_zone(self, driver_id: str, new_zone: str) -> Driver:
         driver = self.get_driver_by_id(driver_id)
 

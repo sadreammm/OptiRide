@@ -32,10 +32,11 @@ const getStatusColor = (status) => {
   }
 };
 const getFatigueColor = (score) => {
-  // Mapping scores (0-100) or text levels to UI classes
-  if (score >= 80 || score === "SEVERE") return "bg-destructive/10 text-destructive";
-  if (score >= 65 || score === "WARNING") return "bg-warning/10 text-warning";
-  if (score >= 30 || score === "MILD") return "bg-primary/10 text-primary";
+  if (!score) return "bg-success/10 text-success";
+  const s = score.toString().toUpperCase();
+  if (s === "SEVERE" || parseFloat(score) >= 80) return "bg-destructive/10 text-destructive";
+  if (s === "WARNING" || parseFloat(score) >= 65) return "bg-warning/10 text-warning";
+  if (s === "MILD" || parseFloat(score) >= 30) return "bg-primary/10 text-primary";
   return "bg-success/10 text-success";
 };
 const formatLastActive = (dateString) => {
@@ -191,7 +192,7 @@ export function DriverMonitoring() {
               <TableHead>Fatigue Level</TableHead>
               <TableHead>Speed</TableHead>
               <TableHead>Last Activity</TableHead>
-              <TableHead>Today's Score</TableHead>
+              <TableHead>Today's Safety Score</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -238,12 +239,12 @@ export function DriverMonitoring() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge className={`${getFatigueColor(driver.fatigue_score ? driver.fatigue_score * 100 : 0)} border-0`}>
-                    {driver.fatigue_score >= 0.8 ? 'SEVERE' : driver.fatigue_score >= 0.65 ? 'WARNING' : 'NORMAL'}
+                  <Badge className={`${getFatigueColor(driver.fatigue_level)} border-0`}>
+                    {driver.fatigue_level}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {driver.current_speed !== undefined && driver.current_speed !== null ? `${Math.max(0, Math.ceil(driver.current_speed))} km/h` : '0 km/h'}
+                  {driver.current_speed !== undefined && driver.current_speed !== null ? `${Math.ceil(driver.current_speed)} km/h` : '0 km/h'}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {formatLastActive(driver.updated_at)}
@@ -259,17 +260,6 @@ export function DriverMonitoring() {
                   <div className="flex items-center gap-2">
                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setSelectedDriver(driver)}>
                       <Eye className="w-4 h-4" />
-                    </Button>
-                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => {
-                      setChatTarget({
-                        driverId: driver.driver_id,
-                        driverName: driver.name,
-                        status: driver.status,
-                        location: driver.current_zone,
-                      });
-                      setIsChatOpen(true);
-                    }}>
-                      <MessageSquare className="w-4 h-4" />
                     </Button>
                   </div>
                 </TableCell>
@@ -332,8 +322,8 @@ export function DriverMonitoring() {
                   <Badge className={`${getStatusColor(currentDriver.status)} border-0`}>
                     {currentDriver.status}
                   </Badge>
-                  <Badge className={`${getFatigueColor(currentDriver.fatigue_score)} border-0`}>
-                    {currentDriver.fatigue_score >= 0.8 ? 'SEVERE' : currentDriver.fatigue_score >= 0.65 ? 'WARNING' : 'NORMAL'}
+                  <Badge className={`${getFatigueColor(driverStats?.fatigue_level || currentDriver.fatigue_level)} border-0`}>
+                    {driverStats?.fatigue_level || currentDriver.fatigue_level}
                   </Badge>
                 </div>
               </div>
@@ -535,8 +525,8 @@ export function DriverMonitoring() {
                 </div>
                 <div className="flex items-center justify-between p-3 bg-muted rounded">
                   <span className="text-muted-foreground">Current Fatigue Level</span>
-                  <Badge className={`${getFatigueColor((driverStats?.current_fatigue_score ?? 0) * 100)} border-0`}>
-                    {((driverStats?.current_fatigue_score ?? 0) * 100).toFixed(0)}/100
+                  <Badge className={`${getFatigueColor((driverStats?.current_fatigue_score ?? 0))} border-0`}>
+                    {((driverStats?.current_fatigue_score ?? 0)).toFixed(0)}/100
                   </Badge>
                 </div>
                 <div className="flex items-center justify-between p-3 bg-muted rounded">

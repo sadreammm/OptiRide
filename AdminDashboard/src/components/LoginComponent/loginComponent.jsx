@@ -107,7 +107,7 @@ const LoginComponent = () => {
                     <img
                         src={optirideLogo}
                         alt="OptiRide logo"
-                        className="h-20 w-auto drop-shadow-xl"
+                        className="h-24 w-auto drop-shadow-xl"
                         loading="lazy"
                     />
                 </div>

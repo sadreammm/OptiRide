@@ -723,11 +723,19 @@ class SafetyMonitoringService:
                 alerts.append(alert) 
         
         if alerts:
-            driver = self.db.query(Driver).filter(Driver.driver_id == driver_id).first()
-            if driver:
-                driver.safety_alerts = (driver.safety_alerts or 0) + len(alerts)
+            safety_impacting_alerts = [
+                a for a in alerts 
+                if a.alert_type in {
+                    'speeding', 'speed_violation', 'harsh_braking', 
+                    'fatigue', 'fatigue_warning'
+                } or a.severity == AlertSeverity.CRITICAL.value
+            ]
             
-            self.db.commit()
+            if safety_impacting_alerts:
+                driver = self.db.query(Driver).filter(Driver.driver_id == driver_id).first()
+                if driver:
+                    driver.safety_alerts = (driver.safety_alerts or 0) + len(safety_impacting_alerts)
+                    self.db.commit()
 
             for alert in alerts:
                 kafka_producer.publish("safety-alerts", {
