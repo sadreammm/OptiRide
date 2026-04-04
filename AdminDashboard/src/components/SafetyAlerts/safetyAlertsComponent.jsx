@@ -81,13 +81,14 @@ const getStatusBadge = (status) => {
   return variants[status] || "";
 };
 const getFatigueBadge = (level) => {
+  const l = level?.toLowerCase() || "normal";
   const variants = {
     normal: "bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400",
     mild: "bg-yellow-100 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400",
     warning: "bg-orange-100 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400",
     severe: "bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-400",
   };
-  return variants[level] || "";
+  return variants[l] || variants.normal;
 };
 const getAlertStatusBadge = (status) => {
   switch (status) {
@@ -148,7 +149,7 @@ export function SafetyAlerts() {
         location: driver?.current_zone || "Unknown Zone",
         severity: severityStr,
         timestampRaw: a.timestamp,
-        timestamp: new Date(`${a.timestamp}Z`.replace('ZZ', 'Z')).toLocaleString(),
+        timestamp: new Date(`${a.timestamp}Z`.replace('ZZ', 'Z')).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
         status: a.acknowledged ? "acknowledged" : "active",
         category: alertTypeToTab[a.alert_type] || "other"
       };
@@ -176,8 +177,9 @@ export function SafetyAlerts() {
         alert.driverId.toLowerCase().includes(searchQuery.toLowerCase()) ||
         alert.title.toLowerCase().includes(searchQuery.toLowerCase());
 
+      const matchesStatus = searchQuery ? true : alert.status === "active";
       const matchesSeverity = severityFilter === "all" || alert.severity === severityFilter;
-      return matchesTab && matchesSearch && matchesSeverity;
+      return matchesTab && matchesSearch && matchesSeverity && matchesStatus;
     });
 
     const sorted = [...matches];
@@ -213,10 +215,6 @@ export function SafetyAlerts() {
   };
   const handleAcknowledge = async (alertId) => {
     try {
-      const alert = alerts.find((a) => a.id === alertId);
-      if (alert) {
-        openChatForAlert(alert);
-      }
       await safetyService.acknowledgeAlert(alertId, true);
       refetchAlerts();
     } catch (error) {
@@ -345,22 +343,18 @@ export function SafetyAlerts() {
                     <span>•</span>
                     <span>{alert.timestamp}</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={() => handleViewDriver(alert.driverId)}>
-                      <Eye className="w-4 h-4 mr-1" />
-                      View Driver
-                    </Button>
-                    {(alert.status === "active" || alert.status === "acknowledged") && (<>
-                      <Button size="sm" variant="outline" onClick={() => handleAcknowledge(alert.id)}>
-                        <CheckCircle className="w-4 h-4 mr-1" />
-                        Acknowledge
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="outline" onClick={() => handleViewDriver(alert.driverId)}>
+                        <Eye className="w-4 h-4 mr-1" />
+                        View Driver
                       </Button>
-                      <Button size="sm" variant="outline" onClick={() => handleMarkSafe(alert.id)}>
-                        <CheckCircle className="w-4 h-4 mr-1" />
-                        Mark Safe
-                      </Button>
-                    </>)}
-                  </div>
+                      {(alert.status === "active") && (
+                        <Button size="sm" variant="outline" onClick={() => handleAcknowledge(alert.id)}>
+                          <CheckCircle className="w-4 h-4 mr-1" />
+                          Acknowledge
+                        </Button>
+                      )}
+                    </div>
                 </div>
               </div>
             </div>
@@ -413,15 +407,16 @@ export function SafetyAlerts() {
                 <Badge className={getStatusBadge(selectedDriver.status)}>
                   {selectedDriver.status.replace("_", " ").toUpperCase()}
                 </Badge>
-                <Badge className={getFatigueBadge(selectedDriver.fatigue_score >= 0.8 ? 'severe' : selectedDriver.fatigue_score >= 0.65 ? 'warning' : 'normal')}>
-                  Fatigue: {selectedDriver.fatigue_score >= 0.8 ? 'SEVERE' : selectedDriver.fatigue_score >= 0.65 ? 'WARNING' : 'NORMAL'}
+                <Badge className={getFatigueBadge(selectedDriverStats?.fatigue_level || selectedDriver.fatigue_level)}>
+                  Fatigue: {selectedDriverStats?.fatigue_level || selectedDriver.fatigue_level}
                 </Badge>
               </div>
             </div>
             <div className="text-right">
-              <div className="text-foreground">Safety Score</div>
-              <div className="text-3xl text-green-600">
-                {selectedDriverStats?.average_rating ? (selectedDriverStats.average_rating * 20).toFixed(0) : "95"}
+              <div className="text-foreground text-sm mb-1">Today's Safety Score</div>
+              <div className={`text-3xl font-bold ${(selectedDriverStats?.today_safety_score ?? 100) >= 80 ? 'text-green-600' : 
+                (selectedDriverStats?.today_safety_score ?? 100) >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>
+                {selectedDriverStats?.today_safety_score?.toFixed(0) ?? "100"}/100
               </div>
             </div>
           </div>
@@ -436,7 +431,7 @@ export function SafetyAlerts() {
               <div className="text-center">
                 <MapPin className="w-12 h-12 text-blue-600 mx-auto mb-2" />
                 <p className="text-muted-foreground">Current Location: {selectedDriver.current_zone || "Unknown"}</p>
-                <p className="text-muted-foreground">Speed: {Math.max(0, selectedDriver.current_speed || 0).toFixed(1)} km/h</p>
+                <p className="text-muted-foreground">Speed: {Math.ceil(selectedDriverStats?.current_speed ?? selectedDriver.current_speed ?? 0)} km/h</p>
               </div>
             </div>
           </Card>
@@ -537,7 +532,7 @@ export function SafetyAlerts() {
               </div>
               <div className="flex items-center justify-between p-3 bg-muted rounded">
                 <span className="text-muted-foreground">Fatigue Score</span>
-                <Badge variant="secondary">{((selectedDriverStats?.current_fatigue_score ?? 0) * 100).toFixed(0)}/100</Badge>
+                <Badge variant="secondary">{((selectedDriverStats?.current_fatigue_score ?? 0)).toFixed(0)}/100</Badge>
               </div>
               <div className="flex items-center justify-between p-3 bg-muted rounded">
                 <span className="text-muted-foreground">Total Orders (Lifetime)</span>

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime
 from geoalchemy2.functions import ST_X, ST_Y
+import math
 from app.db.database import get_db
 from app.core.dependencies import get_current_driver, get_current_user, get_current_admin
 from app.core.socket_manager import socket_manager, emit_sync
@@ -62,17 +63,75 @@ def list_drivers(
     total = db.query(Driver).count()
     drivers = driver_service.get_all_drivers(skip=skip, limit=limit)
     
+    today_midnight = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    driver_ids = [d.driver_id for d in drivers]
+    
+    alert_stats = {}
+    if driver_ids:
+        alert_results = db.query(
+            Alert.driver_id, 
+            Alert.alert_type,
+            Alert.severity,
+            func.count(Alert.alert_id).label('count')
+        ).filter(
+            Alert.driver_id.in_(driver_ids),
+            Alert.timestamp >= today_midnight
+        ).group_by(Alert.driver_id, Alert.alert_type, Alert.severity).all()
+        
+        for r in alert_results:
+            if r.driver_id not in alert_stats:
+                alert_stats[r.driver_id] = {
+                    'fatigue': 0, 'speeding': 0, 'harsh_braking': 0, 
+                    'unusual_movement': 0, 'harsh_acceleration': 0, 'heavy': 0, 'total': 0
+                }
+            
+            atype = r.alert_type
+            if atype in ['fatigue', 'fatigue_warning']: alert_stats[r.driver_id]['fatigue'] += r.count
+            elif atype in ['speeding', 'speed_violation']: alert_stats[r.driver_id]['speeding'] += r.count
+            elif atype == 'harsh_braking': alert_stats[r.driver_id]['harsh_braking'] += r.count
+            elif atype == 'harsh_acceleration': alert_stats[r.driver_id]['harsh_acceleration'] += r.count
+            elif atype == 'unusual_movement': alert_stats[r.driver_id]['unusual_movement'] += r.count
+            
+            if r.severity == 4:
+                alert_stats[r.driver_id]['heavy'] += r.count
+                
+            alert_stats[r.driver_id]['total'] += r.count
+
     drivers_with_stats = []
     for driver in drivers:
         driver_resp = DriverWithTodayStats.model_validate(driver)
         
-        driver_resp.today_safety_alerts = driver.safety_alerts
-        driver_resp.today_safety_score = driver_resp.safety_score
+        stats = alert_stats.get(driver.driver_id, {
+            'fatigue': 0, 'speeding': 0, 'harsh_braking': 0, 
+            'unusual_movement': 0, 'harsh_acceleration': 0, 'heavy': 0, 'total': 0
+        })
+        
+        driver_resp.today_safety_alerts = stats['total']
+        
+        if driver.duty_status == "off_duty":
+            driver_resp.today_safety_score = 100.0
+            driver_resp.fatigue_level = "NORMAL"
+        else:
+            # We use the centralized service logic
+            driver_resp.today_safety_score = DriverService.calculate_safety_score(
+                heavy_deductions=stats['heavy'],
+                fatigue_alerts=stats['fatigue'],
+                speeding_events=stats['speeding'],
+                harsh_braking_events=stats['harsh_braking'],
+                unusual_movement_events=stats['unusual_movement'],
+                harsh_acceleration_events=stats['harsh_acceleration'],
+                fatigue_score=driver.fatigue_score
+            )
+            
+            # Determine unified fatigue level
+            driver_resp.fatigue_level = DriverService.get_fatigue_level(
+                score=driver.fatigue_score, 
+                today_alerts=stats['fatigue']
+            )
+        
         driver_resp.fatigue_score = driver.fatigue_score
-        driver_resp.current_speed = driver.current_speed
-        driver_resp.today_harsh_braking = 0
-        driver_resp.today_speeding = 0
-        driver_resp.today_fatigue_alerts = 0
+        driver_resp.current_speed = math.ceil(float(driver.current_speed or 0.0))
         
         if driver.user:
             driver_resp.email = driver.user.email
