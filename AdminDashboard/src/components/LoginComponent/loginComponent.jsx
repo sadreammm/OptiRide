@@ -101,7 +101,9 @@ const LoginComponent = () => {
     return (
         <div className="w-full max-w-lg">
             {/* Logo Card */}
-            <div className="bg-card rounded-2xl shadow-2xl p-8 bg-white/90 backdrop-blur-sm">
+            <div className="login-card-light rounded-3xl p-10 relative overflow-hidden group">
+                {/* Subtle shine effect on top */}
+                <div className="absolute -top-24 -left-24 w-48 h-48 bg-white/40 rounded-full blur-3xl pointer-events-none" />
                 {/* Logo */}
                 <div className="flex flex-col items-center mb-8">
                     <img
@@ -127,7 +129,7 @@ const LoginComponent = () => {
                             placeholder="EMAIL ADDRESS"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
-                            className="pl-10 h-12 bg-secondary border-gray-200"
+                            className="pl-10 h-14 bg-white/50 border-gray-200 text-slate-900 placeholder:text-gray-400 focus:bg-white transition-all rounded-xl"
                             required
                         />
                     </div>
@@ -139,7 +141,7 @@ const LoginComponent = () => {
                             placeholder="PASSWORD"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            className="pl-10 h-12 bg-secondary border-gray-200"
+                            className="pl-10 h-14 bg-white/50 border-gray-200 text-slate-900 placeholder:text-gray-400 focus:bg-white transition-all rounded-xl"
                             required
                         />
                     </div>
@@ -147,7 +149,8 @@ const LoginComponent = () => {
                     <Button
                         type="submit"
                         disabled={isLoading}
-                        className="w-full h-12 text-base font-semibold bg-primary hover:bg-primary/90"
+                        style={{ backgroundColor: 'hsl(var(--logo-navy))', color: 'hsl(var(--logo-navy-foreground))' }}
+                        className="w-full h-14 text-base font-bold hover:brightness-110 active:scale-[0.98] transition-all rounded-xl shadow-md"
                     >
                         {isLoading ? (
                             <>
@@ -160,11 +163,12 @@ const LoginComponent = () => {
                 </form>
 
                 {/* Forgot Password Link */}
-                <div className="text-center mt-4">
+                <div className="text-center mt-6">
                     <button
                         type="button"
                         onClick={() => handleForgotOpenChange(true)}
-                        className="text-sm text-primary hover:underline"
+                        className="text-sm font-semibold hover:underline transition-all"
+                        style={{ color: 'hsl(var(--logo-navy))' }}
                     >
                         Forgot password?
                     </button>

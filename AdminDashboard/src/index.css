@@ -72,6 +72,12 @@
     --chart-3: 38 92% 50%;
     --chart-4: 280 65% 60%;
     --chart-5: 0 84% 60%;
+    
+    /* Logo accents */
+    --logo-gold: 35 35% 70%;
+    --logo-gold-foreground: 220 25% 10%;
+    --logo-navy: 215 60% 10%;
+    --logo-navy-foreground: 0 0% 100%;
   }
 
   .dark {
@@ -131,7 +137,33 @@
   }
 
   .gradient-login {
-    background: linear-gradient(180deg, hsl(210 100% 65%) 0%, hsl(210 100% 75%) 50%, hsl(199 89% 48%) 100%);
+    background: radial-gradient(circle at top right, hsl(215 50% 12%) 0%, hsl(220 40% 6%) 100%);
+    position: relative;
+  }
+
+  .gradient-login::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(circle at 20% 30%, hsla(199, 89%, 48%, 0.05) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .login-card-dark {
+    background: rgba(15, 23, 42, 0.7);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  }
+
+  .login-card-light {
+    background: rgba(248, 250, 252, 0.95);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
   }
 
   .status-badge {
