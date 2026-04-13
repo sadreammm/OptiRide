@@ -18,8 +18,7 @@ The project consists of three main components:
 3.  **Mobile App**: [![Android Download](https://img.shields.io/badge/Download-APK-green?logo=android&style=for-the-badge)](https://github.com/sadreammm/optiride/releases/latest)
 4.  **YouTube**: [Demo Video](https://youtu.be/iRk6zZUTvhk)
 5.  **Presentation**: [Solution Presentation](https://optiride.my.canva.site/)
-6.  
-
+   
 ---
 
 ## 🛠️ Prerequisites
